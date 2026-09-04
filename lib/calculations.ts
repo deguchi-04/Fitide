@@ -18,13 +18,23 @@ export function bmr(profile: Profile) {
 
 export function exerciseCaloriesPerWeek(profile: Profile, activities: Activity[]) {
   return activities.reduce(
-    (sum, activity) => sum + activity.met * profile.currentWeightKg * (activity.minutes / 60) * activity.days.length,
+    // The sedentary baseline already includes resting energy during the session.
+    // Count only the activity energy above 1 MET to avoid double counting it.
+    (sum, activity) => sum + Math.max(0, activity.met - 1) * profile.currentWeightKg * (activity.minutes / 60) * activity.days.length,
     0,
   );
 }
 
 export function tdee(profile: Profile, activities: Activity[]) {
   return Math.round(bmr(profile) * 1.2 + exerciseCaloriesPerWeek(profile, activities) / 7);
+}
+
+export function calorieDeficit(maintenance: number, calorieTarget: number) {
+  return Math.max(0, Math.round(maintenance - calorieTarget));
+}
+
+export function fatEquivalentKg(dailyDeficit: number, days = 7) {
+  return Math.round(((dailyDeficit * days) / 7700) * 1000) / 1000;
 }
 
 export function suggestedGoals(profile: Profile, activities: Activity[], kind: Goals['kind']): Goals {
