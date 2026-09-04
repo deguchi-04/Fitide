@@ -13,18 +13,18 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.SITE_URL ?? 'https://forma-pessoal.brave-sole-5951.chatgpt.site'),
-  title: 'Forma — nutrição e treino',
+  metadataBase: new URL(process.env.SITE_URL ?? 'https://forma-pessoal.thaidy-deguchi.chatgpt.site'),
+  title: 'Fitide — nutrição e treino',
   description: 'O teu painel pessoal de dieta, treino, jejum e progresso.',
   openGraph: {
-    title: 'Forma — nutrição e treino',
+    title: 'Fitide — nutrição e treino',
     description: 'Nutrição, treino e progresso num só lugar.',
     images: ['/og.png'],
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Forma — nutrição e treino',
+    title: 'Fitide — nutrição e treino',
     description: 'Nutrição, treino e progresso num só lugar.',
     images: ['/og.png'],
   },

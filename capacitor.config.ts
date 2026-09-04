@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.thaidy.forma',
-  appName: 'Forma',
+  appName: 'Fitide',
   webDir: 'mobile-web',
   server: {
     url: 'https://forma-pessoal.thaidy-deguchi.chatgpt.site',

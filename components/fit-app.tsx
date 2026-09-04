@@ -5,6 +5,7 @@ import {
   Activity as ActivityIcon,
   Apple,
   ArrowLeft,
+  BookOpen,
   CalendarDays,
   Check,
   ChevronLeft,
@@ -12,8 +13,11 @@ import {
   CirclePause,
   CirclePlay,
   Dumbbell,
+  ExternalLink,
   Flame,
+  HeartPulse,
   Home,
+  CircleHelp,
   LoaderCircle,
   Minus,
   Plus,
@@ -22,7 +26,6 @@ import {
   Scale,
   Settings,
   Sparkles,
-  Target,
   TimerReset,
   Trash2,
   TrendingDown,
@@ -38,7 +41,11 @@ import {
   CartesianGrid,
   XAxis,
   YAxis,
+  Pie,
+  PieChart,
 } from 'recharts';
+import { Capacitor } from '@capacitor/core';
+import { HealthFitness } from '@capacitor/health-fitness';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -72,14 +79,23 @@ import type {
   Meal,
   Nutrients,
   Profile,
+  HealthSnapshot,
   WorkoutPlan,
 } from '@/lib/fit-types';
+import {
+  ijfTechniqueUrl,
+  judoTechniques,
+  KODOKAN_DEFINITIONS_URL,
+  KODOKAN_TECHNIQUES_URL,
+  type JudoCategory,
+} from '@/lib/judo';
 import { tacoFoods, TACO_URL } from '@/lib/taco';
 
 type Page =
   | 'today'
   | 'meals'
   | 'workout'
+  | 'judo'
   | 'calendar'
   | 'progress'
   | 'settings';
@@ -88,6 +104,7 @@ const pageLabels: Record<Page, string> = {
   today: 'Hoje',
   meals: 'Refeições',
   workout: 'Treino',
+  judo: 'Judô',
   calendar: 'Calendário',
   progress: 'Progresso',
   settings: 'Definições',
@@ -96,6 +113,7 @@ const navItems = [
   { id: 'today' as Page, label: 'Hoje', icon: Home },
   { id: 'meals' as Page, label: 'Refeições', icon: Utensils },
   { id: 'workout' as Page, label: 'Treino', icon: Dumbbell },
+  { id: 'judo' as Page, label: 'Judô', icon: BookOpen },
   { id: 'calendar' as Page, label: 'Calendário', icon: CalendarDays },
   { id: 'progress' as Page, label: 'Progresso', icon: Scale },
 ];
@@ -187,6 +205,15 @@ function formatLiters(value: number) {
   return value.toFixed(3).replace('.', ',');
 }
 
+function FitideLogo() {
+  return (
+    <svg viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M7 7.5h17M7 15.5h12M7 7.5v17" />
+      <path className="logo-accent" d="M17.5 24.5c3.7-1.2 6.2-3.9 7.5-8" />
+    </svg>
+  );
+}
+
 function localDateKey(date = new Date()) {
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
@@ -216,6 +243,9 @@ function mergeState(saved: Partial<AppState>): AppState {
     fasts: saved.fasts ?? [],
     workoutPlans: saved.workoutPlans ?? [],
     workoutSessions: saved.workoutSessions ?? [],
+    intervalPresets: saved.intervalPresets ?? defaultState.intervalPresets,
+    judoPractices: saved.judoPractices ?? [],
+    healthSnapshots: saved.healthSnapshots ?? [],
   };
 }
 
@@ -280,12 +310,6 @@ export default function FitApp() {
   const water =
     state.water.find((entry) => entry.date === selectedDate)?.liters ?? 0;
   const remaining = Math.round(state.goals.calorieTarget - consumed.calories);
-  const maintenance = tdee(state.profile, state.activities);
-  const estimate = weeksToGoal(
-    state.profile,
-    state.goals.calorieTarget,
-    maintenance,
-  );
   const fastSeconds = state.activeFastStart
     ? Math.max(
         0,
@@ -325,12 +349,32 @@ export default function FitApp() {
     }
   }
 
+  function addPastFast(startTime: string, endTime: string) {
+    const start = new Date(`${selectedDate}T${startTime}:00`);
+    const end = new Date(`${selectedDate}T${endTime}:00`);
+    if (end <= start) end.setDate(end.getDate() + 1);
+    patchState({ fasts: [...state.fasts, { id: uid(), start: start.toISOString(), end: end.toISOString() }] });
+  }
+
+  async function resetProfile() {
+    await fetch('/api/state', { method: 'DELETE' }).catch(() => undefined);
+    setSelectedDate(localDateKey());
+    setPage('today');
+    setState({
+      ...defaultState,
+      profile: { ...defaultState.profile },
+      goals: { ...defaultState.goals },
+      activities: [], meals: [], weights: [], water: [], fasts: [], workoutPlans: [], workoutSessions: [],
+      intervalPresets: [...defaultState.intervalPresets], judoPractices: [], healthSnapshots: [],
+    });
+  }
+
   if (!loaded) {
     return (
       <div className="loading-screen">
         <div className="brand-mark large">
-          <span>F</span>
-          <strong>Forma</strong>
+          <span><FitideLogo /></span>
+          <strong>Fitide</strong>
         </div>
         <LoaderCircle className="spin" />
         <p>A preparar o teu espaço pessoal…</p>
@@ -346,8 +390,8 @@ export default function FitApp() {
     <main className="app-shell">
       <aside className="side-nav">
         <div className="brand-mark">
-          <span>F</span>
-          <strong>Forma</strong>
+          <span><FitideLogo /></span>
+          <strong>Fitide</strong>
         </div>
         <nav aria-label="Navegação principal">
           {navItems.map(({ id, label, icon: Icon }) => (
@@ -429,6 +473,7 @@ export default function FitApp() {
             fastSeconds={fastSeconds}
             onWater={updateWater}
             onFast={toggleFast}
+            onPastFast={addPastFast}
             onAddMeal={() => setMealOpen(true)}
             onGo={setPage}
           />
@@ -447,13 +492,17 @@ export default function FitApp() {
           />
         )}
         {page === 'workout' && (
-          <WorkoutPage state={state} setState={setState} />
+          <WorkoutPage state={state} setState={setState} date={selectedDate} onGoJudo={() => setPage('judo')} />
+        )}
+        {page === 'judo' && (
+          <JudoPage state={state} setState={setState} date={selectedDate} />
         )}
         {page === 'calendar' && (
           <CalendarPage
             state={state}
             selectedDate={selectedDate}
             setSelectedDate={setSelectedDate}
+            onOpenDay={() => setPage('today')}
           />
         )}
         {page === 'progress' && (
@@ -463,8 +512,7 @@ export default function FitApp() {
           <SettingsPage
             state={state}
             setState={setState}
-            maintenance={maintenance}
-            estimate={estimate}
+            onReset={resetProfile}
           />
         )}
       </section>
@@ -545,8 +593,8 @@ function Onboarding({
     <div className="onboarding-shell">
       <section className="onboarding-copy">
         <div className="brand-mark large">
-          <span>F</span>
-          <strong>Forma</strong>
+          <span><FitideLogo /></span>
+          <strong>Fitide</strong>
         </div>
         <div>
           <p className="eyebrow light">O TEU ESPAÇO PESSOAL</p>
@@ -718,6 +766,7 @@ function TodayPage({
   fastSeconds,
   onWater,
   onFast,
+  onPastFast,
   onAddMeal,
   onGo,
 }: {
@@ -729,6 +778,7 @@ function TodayPage({
   fastSeconds: number;
   onWater: (delta: number) => void;
   onFast: () => void;
+  onPastFast: (startTime: string, endTime: string) => void;
   onAddMeal: () => void;
   onGo: (page: Page) => void;
 }) {
@@ -736,10 +786,22 @@ function TodayPage({
     100,
     Math.round((consumed.calories / state.goals.calorieTarget) * 100),
   );
-  const activePlan = state.workoutPlans.at(-1);
+  const selectedDay = new Date(`${date}T12:00:00`).getDay();
+  const isToday = date === localDateKey();
+  const activePlan = state.workoutPlans
+    .filter((plan) => plan.days?.includes(selectedDay))
+    .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'))[0];
   const maintenance = tdee(state.profile, state.activities);
   const deficit = calorieDeficit(maintenance, state.goals.calorieTarget);
   const weeklyFat = fatEquivalentKg(deficit);
+  const health = state.healthSnapshots.find((entry) => entry.date === date);
+  const [pastFastStart, setPastFastStart] = useState('20:00');
+  const [pastFastEnd, setPastFastEnd] = useState('12:00');
+  const macroPie = [
+    { name: 'Proteína', value: Math.round(consumed.protein * 4), fill: '#168fbd' },
+    { name: 'Hidratos', value: Math.round(consumed.carbs * 4), fill: '#ef6f4c' },
+    { name: 'Gordura', value: Math.round(consumed.fat * 9), fill: '#70463b' },
+  ].filter((item) => item.value > 0);
   return (
     <div className="dashboard-grid page-enter">
       <section className="hero-card">
@@ -748,7 +810,7 @@ function TodayPage({
             <TrendingDown />{' '}
             {remaining >= 0 ? 'Dentro do objetivo' : 'Objetivo ultrapassado'}
           </span>
-          <p className="eyebrow light">BALANÇO DE HOJE</p>
+          <p className="eyebrow light">{isToday ? 'BALANÇO DE HOJE' : 'BALANÇO DO DIA'}</p>
           <h2>{Math.abs(remaining).toLocaleString('pt-PT')} kcal</h2>
           <p>
             {remaining >= 0
@@ -770,7 +832,7 @@ function TodayPage({
         <div
           className="goal-ring"
           style={{
-            background: `conic-gradient(#e7a766 0 ${caloriePercent}%, rgba(255,255,255,.13) ${caloriePercent}% 100%)`,
+            background: `conic-gradient(#ef6f4c 0 ${caloriePercent}%, rgba(255,255,255,.13) ${caloriePercent}% 100%)`,
           }}
         >
           <div>
@@ -809,11 +871,19 @@ function TodayPage({
           tone="blue"
         />
       </section>
+      {health && (
+        <section className="health-strip">
+          <div><HeartPulse /><span><small>Health Connect</small><strong>{health.steps?.toLocaleString('pt-PT') ?? '—'} passos</strong></span></div>
+          <div><small>Calorias ativas</small><strong>{health.activeCalories === undefined ? '—' : `${Math.round(health.activeCalories)} kcal`}</strong></div>
+          <div><small>Frequência média</small><strong>{health.averageHeartRate === undefined ? '—' : `${Math.round(health.averageHeartRate)} bpm`}</strong></div>
+          <div><small>Sono</small><strong>{health.sleepMinutes === undefined ? '—' : `${Math.floor(health.sleepMinutes / 60)}h ${Math.round(health.sleepMinutes % 60)}m`}</strong></div>
+        </section>
+      )}
       <Card className="panel meals-panel">
         <CardHeader className="panel-heading">
           <div>
             <p className="eyebrow">ALIMENTAÇÃO</p>
-            <CardTitle>Refeições de hoje</CardTitle>
+            <CardTitle>{isToday ? 'Refeições de hoje' : 'Refeições deste dia'}</CardTitle>
           </div>
           <Button variant="ghost" onClick={onAddMeal}>
             <Plus /> Adicionar
@@ -851,7 +921,7 @@ function TodayPage({
             <>
               <div className="training-meta">
                 <span>{activePlan.exercises.length} exercícios</span>
-                <span>≈ 50 min</span>
+              <span>{activePlan.time ?? 'Sem hora'}</span>
                 <span>{activePlan.source}</span>
               </div>
               <div className="exercise-stack">
@@ -876,9 +946,9 @@ function TodayPage({
             <EmptyState
               icon={Sparkles}
               title="Cria o teu primeiro plano"
-              text="Uma rotina de academia adaptada ao objetivo."
-              action="Sugerir treino"
-              onClick={() => onGo('workout')}
+              text="Agenda uma rotina nos dias certos dentro das Definições."
+              action="Configurar rotina"
+              onClick={() => onGo('settings')}
             />
           )}
         </CardContent>
@@ -926,14 +996,18 @@ function TodayPage({
                 </small>
               </span>
             </div>
-            <Button
-              className="wide-button"
-              variant={state.activeFastStart ? 'outline' : 'default'}
-              onClick={onFast}
-            >
-              {state.activeFastStart ? <CirclePause /> : <CirclePlay />}
-              {state.activeFastStart ? 'Terminar jejum' : 'Começar jejum'}
-            </Button>
+            {isToday ? (
+              <Button className="wide-button" variant={state.activeFastStart ? 'outline' : 'default'} onClick={onFast}>
+                {state.activeFastStart ? <CirclePause /> : <CirclePlay />}
+                {state.activeFastStart ? 'Terminar jejum' : 'Começar jejum'}
+              </Button>
+            ) : (
+              <div className="past-fast-form">
+                <label><span>Início</span><Input type="time" value={pastFastStart} onChange={(event) => setPastFastStart(event.target.value)} /></label>
+                <label><span>Fim</span><Input type="time" value={pastFastEnd} onChange={(event) => setPastFastEnd(event.target.value)} /></label>
+                <Button onClick={() => onPastFast(pastFastStart, pastFastEnd)}><Plus /> Registar jejum</Button>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -947,31 +1021,23 @@ function TodayPage({
             Ajustar metas
           </Button>
         </CardHeader>
-        <CardContent className="macro-bars">
-          <Macro
-            name="Proteína"
-            current={consumed.protein}
-            target={state.goals.proteinG}
-            color="var(--plum)"
-          />
-          <Macro
-            name="Hidratos"
-            current={consumed.carbs}
-            target={state.goals.carbsG}
-            color="var(--orange)"
-          />
-          <Macro
-            name="Gordura"
-            current={consumed.fat}
-            target={state.goals.fatG}
-            color="var(--green)"
-          />
-          <Macro
-            name="Fibra"
-            current={consumed.fiber}
-            target={state.goals.fiberG}
-            color="var(--blue)"
-          />
+        <CardContent className="macro-overview">
+          <div className="macro-pie">
+            {macroPie.length ? (
+              <ChartContainer className="h-[220px] w-full" config={{ protein: { label: 'Proteína', color: '#168fbd' } }}>
+                <PieChart><ChartTooltip content={<ChartTooltipContent nameKey="name" />} /><Pie data={macroPie} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={3} /></PieChart>
+              </ChartContainer>
+            ) : (
+              <EmptyState icon={Apple} title="Ainda sem macros" text="Adiciona uma refeição para veres a distribuição." />
+            )}
+            <small>Distribuição calórica entre proteína, hidratos e gordura</small>
+          </div>
+          <div className="macro-bars">
+            <Macro name="Proteína" current={consumed.protein} target={state.goals.proteinG} color="var(--plum)" />
+            <Macro name="Hidratos" current={consumed.carbs} target={state.goals.carbsG} color="var(--orange)" />
+            <Macro name="Gordura" current={consumed.fat} target={state.goals.fatG} color="var(--green)" />
+            <Macro name="Fibra" current={consumed.fiber} target={state.goals.fiberG} color="var(--blue)" />
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -1377,21 +1443,24 @@ function MealDialog({
 function WorkoutPage({
   state,
   setState,
+  date,
+  onGoJudo,
 }: {
   state: AppState;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
+  date: string;
+  onGoJudo: () => void;
 }) {
-  const [split, setSplit] = useState('full_body');
-  const [bodyFocus, setBodyFocus] = useState<string[]>([]);
-  const [level, setLevel] = useState('intermediate');
-  const [generating, setGenerating] = useState(false);
   const [activePlan, setActivePlan] = useState<WorkoutPlan | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [completedSets, setCompletedSets] = useState<string[]>([]);
   const [rest, setRest] = useState(0);
   const [setValues, setSetValues] = useState<Record<string, { load: number | ''; reps: number | '' }>>({});
-  const latestPlan = state.workoutPlans.at(-1);
+  const selectedDay = new Date(`${date}T12:00:00`).getDay();
+  const duePlans = state.workoutPlans
+    .filter((plan) => plan.days?.includes(selectedDay))
+    .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'));
 
   useEffect(() => {
     if (!startedAt) return;
@@ -1401,46 +1470,6 @@ function WorkoutPage({
     }, 1000);
     return () => window.clearInterval(timer);
   }, [startedAt]);
-
-  async function generate() {
-    setGenerating(true);
-    try {
-      const response = await fetch('/api/workout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          goal:
-            state.goals.kind === 'lose_fat'
-              ? 'fat_loss'
-              : state.goals.kind === 'gain_muscle'
-                ? 'muscle_gain'
-                : 'general_fitness',
-          level,
-          split,
-          bodyFocus,
-        }),
-      });
-      const result = (await response.json()) as {
-        source: WorkoutPlan['source'];
-        exercises: WorkoutPlan['exercises'];
-      };
-      const plan: WorkoutPlan = {
-        id: uid(),
-        name: bodyFocus.length
-          ? `Mistura: ${bodyFocus.map((value) => muscleOptions.find((item) => item.value === value)?.label).filter(Boolean).join(', ')}`
-          : splitLabels[split as keyof typeof splitLabels],
-        source: result.source,
-        createdAt: new Date().toISOString(),
-        exercises: result.exercises,
-      };
-      setState((current) => ({
-        ...current,
-        workoutPlans: [...current.workoutPlans, plan],
-      }));
-    } finally {
-      setGenerating(false);
-    }
-  }
 
   function startWorkout(plan: WorkoutPlan) {
     setActivePlan(plan);
@@ -1463,7 +1492,7 @@ function WorkoutPage({
         ...current.workoutSessions,
         {
           id: uid(),
-          date: localDateKey(),
+          date,
           planName: activePlan.name,
           minutes,
           completedSets: completedSets.length,
@@ -1606,95 +1635,29 @@ function WorkoutPage({
     <div className="content-page page-enter">
       <section className="page-intro">
         <div>
-          <p className="eyebrow">ACADEMIA</p>
-          <h2>Treino feito à tua medida</h2>
-          <p>
-            Gera uma rotina a partir do teu objetivo e controla séries, cargas,
-            tempo e descanso.
-          </p>
+          <p className="eyebrow">TREINO DO DIA</p>
+          <h2>{new Date(`${date}T12:00:00`).toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' })}</h2>
+          <p>As sessões agendadas aparecem por ordem de hora.</p>
         </div>
-        {latestPlan && (
-          <Button size="lg" onClick={() => startWorkout(latestPlan)}>
-            <CirclePlay /> Começar treino
+        <div className="page-intro-actions">
+          <Button variant="outline" size="lg" onClick={onGoJudo}>
+            <BookOpen /> Área de judô
           </Button>
-        )}
-      </section>
-      <div className="workout-layout">
-        <Card className="panel generator-card">
-          <CardHeader>
-            <div className="round-icon">
-              <Sparkles />
-            </div>
-            <CardTitle>Sugerir nova rotina</CardTitle>
-            <CardDescription>
-              A integração usa o WorkoutX quando a chave está configurada.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Field label="Divisão">
-              <select
-                value={split}
-                onChange={(e) => {
-                  setSplit(e.target.value);
-                  setBodyFocus([]);
-                }}
-              >
-                {Object.entries(splitLabels).map(([value, label]) => (
-                  <option value={value} key={value}>{label}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Misturar grupos (opcional)">
-              <div className="muscle-picker">
-                {muscleOptions.map((muscle) => (
-                  <button
-                    type="button"
-                    key={muscle.value}
-                    className={bodyFocus.includes(muscle.value) ? 'selected' : ''}
-                    onClick={() =>
-                      setBodyFocus((current) =>
-                        current.includes(muscle.value)
-                          ? current.filter((value) => value !== muscle.value)
-                          : [...current, muscle.value],
-                      )
-                    }
-                  >
-                    {muscle.label}
-                  </button>
-                ))}
-              </div>
-            </Field>
-            <Field label="Nível">
-              <select value={level} onChange={(e) => setLevel(e.target.value)}>
-                <option value="beginner">Iniciante</option>
-                <option value="intermediate">Intermédio</option>
-                <option value="advanced">Avançado</option>
-              </select>
-            </Field>
-            <Button
-              size="lg"
-              className="wide-button"
-              onClick={generate}
-              disabled={generating}
-            >
-              {generating ? <LoaderCircle className="spin" /> : <Sparkles />}
-              {generating ? 'A gerar…' : 'Gerar rotina'}
+          {duePlans[0] && (
+            <Button size="lg" onClick={() => startWorkout(duePlans[0])}>
+              <CirclePlay /> Começar treino
             </Button>
-          </CardContent>
-        </Card>
-        <div className="plan-stack">
-          {state.workoutPlans.length ? (
-            [...state.workoutPlans].reverse().map((plan) => (
+          )}
+        </div>
+      </section>
+      <div className="workout-day-list">
+          <TrainingTimer state={state} setState={setState} />
+          {duePlans.length ? (
+            duePlans.map((plan) => (
               <PlanCard
                 key={plan.id}
                 plan={plan}
                 onStart={() => startWorkout(plan)}
-                onDelete={() =>
-                  setState((current) => ({
-                    ...current,
-                    workoutPlans: current.workoutPlans.filter((item) => item.id !== plan.id),
-                  }))
-                }
               />
             ))
           ) : (
@@ -1702,8 +1665,8 @@ function WorkoutPage({
               <CardContent>
                 <EmptyState
                   icon={Dumbbell}
-                  title="Nenhuma rotina criada"
-                  text="Escolhe a divisão e o nível para receberes uma sugestão."
+                  title="Sem treino agendado"
+                  text="Adiciona uma rotina semanal nas Definições e escolhe os dias e a hora."
                 />
               </CardContent>
             </Card>
@@ -1735,7 +1698,6 @@ function WorkoutPage({
               </CardContent>
             </Card>
           )}
-        </div>
       </div>
     </div>
   );
@@ -1748,7 +1710,7 @@ function PlanCard({
 }: {
   plan: WorkoutPlan;
   onStart: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   return (
     <Card className="panel plan-card">
@@ -1758,12 +1720,15 @@ function PlanCard({
           <CardTitle>{plan.name}</CardTitle>
         </div>
         <div className="plan-actions">
+          {plan.time && <span className="time-badge">{plan.time}</span>}
           <span className={`source-badge ${plan.source === 'WorkoutX' ? 'live' : ''}`}>
             {plan.source}
           </span>
-          <Button type="button" variant="ghost" size="icon" aria-label={`Apagar rotina ${plan.name}`} onClick={onDelete}>
-            <Trash2 />
-          </Button>
+          {onDelete && (
+            <Button type="button" variant="ghost" size="icon" aria-label={`Apagar rotina ${plan.name}`} onClick={onDelete}>
+              <Trash2 />
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>
@@ -1795,14 +1760,261 @@ function PlanCard({
   );
 }
 
+function TrainingTimer({
+  state,
+  setState,
+}: {
+  state: AppState;
+  setState: React.Dispatch<React.SetStateAction<AppState>>;
+}) {
+  const [mode, setMode] = useState<'interval' | 'free'>('interval');
+  const [name, setName] = useState('Novo intervalado');
+  const [workSeconds, setWorkSeconds] = useState(120);
+  const [restSeconds, setRestSeconds] = useState(60);
+  const [rounds, setRounds] = useState(7);
+  const [phase, setPhase] = useState<'work' | 'rest' | 'done'>('work');
+  const [round, setRound] = useState(1);
+  const [remaining, setRemaining] = useState(120);
+  const [freeElapsed, setFreeElapsed] = useState(0);
+  const [running, setRunning] = useState(false);
+
+  function resetTimer() {
+    setRunning(false);
+    setPhase('work');
+    setRound(1);
+    setRemaining(workSeconds);
+    setFreeElapsed(0);
+  }
+
+  function nextPhase() {
+    if (phase === 'work') {
+      if (round >= rounds) {
+        setPhase('done');
+        setRemaining(0);
+        setRunning(false);
+      } else if (restSeconds > 0) {
+        setPhase('rest');
+        setRemaining(restSeconds);
+      } else {
+        setRound((value) => value + 1);
+        setRemaining(workSeconds);
+      }
+    } else if (phase === 'rest') {
+      setRound((value) => value + 1);
+      setPhase('work');
+      setRemaining(workSeconds);
+    }
+  }
+
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => {
+      if (mode === 'free') {
+        setFreeElapsed((value) => value + 1);
+        return;
+      }
+      setRemaining((value) => {
+        if (value > 1) return value - 1;
+        window.setTimeout(nextPhase, 0);
+        return 0;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [running, mode, phase, round, rounds, restSeconds, workSeconds]);
+
+  function loadPreset(id: string) {
+    const preset = state.intervalPresets.find((item) => item.id === id);
+    if (!preset) return;
+    setName(preset.name);
+    setWorkSeconds(preset.workSeconds);
+    setRestSeconds(preset.restSeconds);
+    setRounds(preset.rounds);
+    setRunning(false);
+    setPhase('work');
+    setRound(1);
+    setRemaining(preset.workSeconds);
+  }
+
+  function savePreset() {
+    const preset = {
+      id: uid(),
+      name: name.trim() || 'Treino intervalado',
+      workSeconds,
+      restSeconds,
+      rounds,
+    };
+    setState((current) => ({
+      ...current,
+      intervalPresets: [...current.intervalPresets, preset],
+    }));
+  }
+
+  return (
+    <Card className="panel interval-card">
+      <CardHeader className="panel-heading">
+        <div>
+          <p className="eyebrow">CRONÓMETRO</p>
+          <CardTitle>Timer de treino</CardTitle>
+          <CardDescription>Intervalos personalizados ou treino livre.</CardDescription>
+        </div>
+        <div className="segmented compact">
+          <button type="button" className={mode === 'interval' ? 'selected' : ''} onClick={() => { setMode('interval'); resetTimer(); }}>Intervalado</button>
+          <button type="button" className={mode === 'free' ? 'selected' : ''} onClick={() => { setMode('free'); resetTimer(); }}>Livre</button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {mode === 'interval' ? (
+          <>
+            <div className={`timer-stage ${phase}`}>
+              <span>{phase === 'work' ? 'TRABALHO' : phase === 'rest' ? 'DESCANSO' : 'CONCLUÍDO'}</span>
+              <strong>{formatDuration(remaining)}</strong>
+              <small>Ronda {round} de {rounds}</small>
+            </div>
+            <div className="timer-actions">
+              <Button type="button" size="lg" onClick={() => { if (phase === 'done') resetTimer(); setRunning((value) => !value); }}>
+                {running ? <CirclePause /> : <CirclePlay />}{running ? 'Pausar' : phase === 'done' ? 'Recomeçar' : 'Iniciar'}
+              </Button>
+              <Button type="button" variant="outline" size="lg" onClick={nextPhase}>Saltar fase</Button>
+              <Button type="button" variant="ghost" size="icon" aria-label="Repor timer" onClick={resetTimer}><RotateCcw /></Button>
+            </div>
+            <div className="interval-builder">
+              <Field label="Nome"><Input value={name} onChange={(event) => setName(event.target.value)} /></Field>
+              <Field label="Trabalho (seg)"><NumberInput value={workSeconds} min={5} max={3600} step="5" onChange={(value) => { setWorkSeconds(value); if (!running) setRemaining(value); }} /></Field>
+              <Field label="Descanso (seg)"><NumberInput value={restSeconds} min={0} max={1800} step="5" onChange={setRestSeconds} /></Field>
+              <Field label="Repetições"><NumberInput value={rounds} min={1} max={100} onChange={setRounds} /></Field>
+              <Button type="button" variant="outline" onClick={savePreset}><Save /> Guardar predefinição</Button>
+            </div>
+            {!!state.intervalPresets.length && (
+              <div className="preset-list">
+                {state.intervalPresets.map((preset) => (
+                  <div key={preset.id}>
+                    <button type="button" onClick={() => loadPreset(preset.id)}><strong>{preset.name}</strong><small>{formatDuration(preset.workSeconds)} / {formatDuration(preset.restSeconds)} · {preset.rounds}×</small></button>
+                    <Button type="button" variant="ghost" size="icon" aria-label={`Apagar ${preset.name}`} onClick={() => setState((current) => ({ ...current, intervalPresets: current.intervalPresets.filter((item) => item.id !== preset.id) }))}><Trash2 /></Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="timer-stage free"><span>TREINO LIVRE</span><strong>{formatDuration(freeElapsed)}</strong><small>Conta o tempo sem limite</small></div>
+            <div className="timer-actions">
+              <Button type="button" size="lg" onClick={() => setRunning((value) => !value)}>{running ? <CirclePause /> : <CirclePlay />}{running ? 'Pausar' : 'Iniciar'}</Button>
+              <Button type="button" variant="ghost" size="icon" aria-label="Repor cronómetro" onClick={resetTimer}><RotateCcw /></Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+const judoCategoryLabels: Record<JudoCategory | 'Todas', string> = {
+  Todas: 'Todas',
+  'Te-waza': 'Braços',
+  'Koshi-waza': 'Anca',
+  'Ashi-waza': 'Pernas',
+  'Sutemi-waza': 'Sacrifício',
+  'Osaekomi-waza': 'Imobilizações',
+  'Shime-waza': 'Estrangulamentos',
+  'Kansetsu-waza': 'Chaves',
+};
+
+function JudoPage({
+  state,
+  setState,
+  date,
+}: {
+  state: AppState;
+  setState: React.Dispatch<React.SetStateAction<AppState>>;
+  date: string;
+}) {
+  const [category, setCategory] = useState<JudoCategory | 'Todas'>('Todas');
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<string[]>([]);
+  const [duration, setDuration] = useState(90);
+  const [uchikomi, setUchikomi] = useState(0);
+  const [randoriRounds, setRandoriRounds] = useState(0);
+  const [randoriMinutes, setRandoriMinutes] = useState(4);
+  const [notes, setNotes] = useState('');
+  const filteredTechniques = judoTechniques.filter((item) =>
+    (category === 'Todas' || item.category === category) &&
+    normalizeText(`${item.name} ${item.japanese}`).includes(normalizeText(query)),
+  );
+  const totalRandori = state.judoPractices.reduce((sum, item) => sum + item.randoriRounds * item.randoriMinutes, 0);
+  const uniqueTechniques = new Set(state.judoPractices.flatMap((item) => item.techniqueIds)).size;
+
+  function savePractice() {
+    setState((current) => ({
+      ...current,
+      judoPractices: [
+        ...current.judoPractices,
+        {
+          id: uid(), date, durationMinutes: duration, techniqueIds: selected,
+          uchikomiReps: uchikomi, randoriRounds, randoriMinutes, notes: notes.trim(),
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    }));
+    setSelected([]);
+    setNotes('');
+  }
+
+  return (
+    <div className="content-page page-enter judo-page">
+      <section className="page-intro">
+        <div><p className="eyebrow">DOJO PESSOAL</p><h2>Judô, técnica por técnica</h2><p>Regista o treino, revê o teu repertório e abre demonstrações oficiais.</p></div>
+        <div className="judo-source-actions">
+          <a className="button-link outline" href={KODOKAN_DEFINITIONS_URL} target="_blank" rel="noreferrer"><BookOpen /> Definições Kodokan</a>
+          <a className="button-link" href={KODOKAN_TECHNIQUES_URL} target="_blank" rel="noreferrer"><ExternalLink /> 100 técnicas oficiais</a>
+        </div>
+      </section>
+      <section className="judo-summary">
+        <MiniStat label="Treinos registados" value={String(state.judoPractices.length)} />
+        <MiniStat label="Técnicas praticadas" value={String(uniqueTechniques)} />
+        <MiniStat label="Randori acumulado" value={`${totalRandori} min`} />
+      </section>
+      <div className="judo-layout">
+        <Card className="panel judo-log-card">
+          <CardHeader><CardTitle>Registar treino de {new Date(`${date}T12:00:00`).toLocaleDateString('pt-PT')}</CardTitle><CardDescription>Um diário curto para orientar a próxima sessão.</CardDescription></CardHeader>
+          <CardContent>
+            <div className="form-grid four">
+              <Field label="Duração (min)"><NumberInput value={duration} min={5} max={360} step="5" onChange={setDuration} /></Field>
+              <Field label="Uchikomi (reps)"><NumberInput value={uchikomi} min={0} max={2000} step="10" onChange={setUchikomi} /></Field>
+              <Field label="Rondas randori"><NumberInput value={randoriRounds} min={0} max={50} onChange={setRandoriRounds} /></Field>
+              <Field label="Min/ronda"><NumberInput value={randoriMinutes} min={1} max={20} onChange={setRandoriMinutes} /></Field>
+            </div>
+            <Field label="Técnicas trabalhadas"><div className="selected-techniques">{selected.length ? selected.map((id) => { const item = judoTechniques.find((technique) => technique.id === id)!; return <button type="button" key={id} onClick={() => setSelected(selected.filter((value) => value !== id))}>{item.name} <X /></button>; }) : <small>Escolhe técnicas no catálogo abaixo.</small>}</div></Field>
+            <Field label="Notas, correções do treinador e próximo foco"><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Ex.: entrar mais perto no uchi-mata; repetir a saída de pegada…" rows={4} /></Field>
+            <Button type="button" size="lg" className="wide-button" onClick={savePractice}><Save /> Guardar treino de judô</Button>
+          </CardContent>
+        </Card>
+        <Card className="panel judo-history-card">
+          <CardHeader><CardTitle>Histórico recente</CardTitle></CardHeader>
+          <CardContent>{state.judoPractices.length ? state.judoPractices.slice(-5).reverse().map((practice) => <div className="judo-history-row" key={practice.id}><div><strong>{new Date(`${practice.date}T12:00:00`).toLocaleDateString('pt-PT')}</strong><small>{practice.durationMinutes} min · {practice.techniqueIds.length} técnicas · {practice.randoriRounds} randori</small></div><Button type="button" variant="ghost" size="icon" aria-label="Apagar registo" onClick={() => setState((current) => ({ ...current, judoPractices: current.judoPractices.filter((item) => item.id !== practice.id) }))}><Trash2 /></Button></div>) : <p className="muted-copy">Ainda não há treinos registados.</p>}</CardContent>
+        </Card>
+      </div>
+      <Card className="panel technique-library">
+        <CardHeader><div><p className="eyebrow">KODOKAN + IJF</p><CardTitle>Biblioteca técnica</CardTitle><CardDescription>Classificação oficial e ligação para vídeo/3D e exemplos de competição da IJF.</CardDescription></div><Input aria-label="Procurar técnica" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Procurar uchi-mata…" /></CardHeader>
+        <CardContent>
+          <div className="technique-filters">{(Object.keys(judoCategoryLabels) as Array<JudoCategory | 'Todas'>).map((item) => <button type="button" key={item} className={category === item ? 'selected' : ''} onClick={() => setCategory(item)}>{judoCategoryLabels[item]}</button>)}</div>
+          <div className="technique-grid">{filteredTechniques.map((item) => <article key={item.id} className={selected.includes(item.id) ? 'selected' : ''}><button type="button" className="technique-select" onClick={() => setSelected((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}><span>{item.japanese}</span><strong>{item.name}</strong><small>{judoCategoryLabels[item.category]}</small></button><a href={ijfTechniqueUrl(item.id)} target="_blank" rel="noreferrer">Vídeo oficial IJF <ExternalLink /></a></article>)}</div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function CalendarPage({
   state,
   selectedDate,
   setSelectedDate,
+  onOpenDay,
 }: {
   state: AppState;
   selectedDate: string;
   setSelectedDate: (date: string) => void;
+  onOpenDay: () => void;
 }) {
   const [month, setMonth] = useState(() => {
     const date = new Date(`${selectedDate}T12:00:00`);
@@ -1938,6 +2150,9 @@ function CalendarPage({
                 <p>Sem refeições registadas.</p>
               )}
             </div>
+            <Button className="wide-button open-day-button" onClick={onOpenDay}>
+              <Plus /> Adicionar ou corrigir registos deste dia
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -1954,6 +2169,7 @@ function ProgressPage({
 }) {
   const [weight, setWeight] = useState(state.profile.currentWeightKg);
   const [range, setRange] = useState<ChartRange>('week');
+  const [entryDate, setEntryDate] = useState(localDateKey());
   const [fat, setFat] = useState<number | ''>(
     state.profile.bodyFatPercent ?? '',
   );
@@ -2009,7 +2225,7 @@ function ProgressPage({
   const periodLabel = range === 'week' ? 'semana' : range === 'month' ? 'mês' : 'ano';
   function addWeight(event: React.FormEvent) {
     event.preventDefault();
-    const date = localDateKey();
+    const date = entryDate;
     const entry = {
       id: uid(),
       date,
@@ -2037,7 +2253,6 @@ function ProgressPage({
             tempo.
           </p>
         </div>
-        <ChartRangePicker value={range} onChange={setRange} />
       </section>
       <div className="progress-stats">
         <MiniStat
@@ -2062,6 +2277,10 @@ function ProgressPage({
         />
       </div>
       <div className="charts-grid">
+        <div className="chart-controls">
+          <span>Período dos gráficos</span>
+          <ChartRangePicker value={range} onChange={setRange} />
+        </div>
         <Card className="panel chart-card wide">
           <CardHeader className="panel-heading">
             <div>
@@ -2074,8 +2293,8 @@ function ProgressPage({
               <ChartContainer
                 className="h-[300px] w-full"
                 config={{
-                  weightKg: { label: 'Peso (kg)', color: '#6a3d5b' },
-                  bodyFatPercent: { label: 'Gordura (%)', color: '#df8a43' },
+                  weightKg: { label: 'Peso (kg)', color: '#168fbd' },
+                  bodyFatPercent: { label: 'Gordura (%)', color: '#ef6f4c' },
                 }}
               >
                 <AreaChart data={weightData} margin={{ left: -15, right: 12 }}>
@@ -2136,6 +2355,9 @@ function ProgressPage({
           </CardHeader>
           <CardContent>
             <form onSubmit={addWeight}>
+              <Field label="Data da medição">
+                <Input type="date" value={entryDate} max={localDateKey()} onChange={(event) => setEntryDate(event.target.value)} />
+              </Field>
               <Field label="Peso (kg)">
                 <NumberInput value={weight} min={30} max={250} step="0.1" onChange={setWeight} />
               </Field>
@@ -2162,8 +2384,8 @@ function ProgressPage({
             <ChartContainer
               className="h-[240px] w-full"
               config={{
-                protein: { label: 'Proteína', color: '#6a3d5b' },
-                carbs: { label: 'Hidratos', color: '#df8a43' },
+                protein: { label: 'Proteína', color: '#168fbd' },
+                carbs: { label: 'Hidratos', color: '#ef6f4c' },
               }}
             >
               <BarChart data={historyData}>
@@ -2192,7 +2414,7 @@ function ProgressPage({
           <CardContent>
             <ChartContainer
               className="h-[240px] w-full"
-              config={{ water: { label: 'Água (L)', color: '#57849c' } }}
+              config={{ water: { label: 'Água (L)', color: '#65a9c7' } }}
             >
               <BarChart data={historyData}>
                 <CartesianGrid vertical={false} />
@@ -2213,16 +2435,146 @@ function ProgressPage({
   );
 }
 
-function SettingsPage({
+function pickHealthValues(payload: string | undefined): number[] {
+  if (!payload) return [];
+  try {
+    const parsed: unknown = JSON.parse(payload);
+    const values: number[] = [];
+    const visit = (value: unknown) => {
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+        return;
+      }
+      if (!value || typeof value !== 'object') return;
+      const record = value as Record<string, unknown>;
+      const preferred = ['y', 'value', 'Value', 'sum', 'Sum', 'average', 'Average', 'total', 'Total'];
+      const key = preferred.find((candidate) => typeof record[candidate] === 'number');
+      if (key) values.push(record[key] as number);
+      else Object.values(record).forEach(visit);
+    };
+    if (typeof parsed === 'number') return [parsed];
+    visit(parsed);
+    return values;
+  } catch {
+    return [];
+  }
+}
+
+function HealthConnectPanel({
   state,
   setState,
-  maintenance,
-  estimate,
 }: {
   state: AppState;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
-  maintenance: number;
-  estimate: number | null;
+}) {
+  const native = typeof window !== 'undefined' && Capacitor.isNativePlatform();
+  const [status, setStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
+  const [message, setMessage] = useState('');
+  const latest = state.healthSnapshots.slice().sort((a, b) => b.date.localeCompare(a.date))[0];
+
+  async function queryMetric(variable: string, operation: 'SUM' | 'AVERAGE', start: Date, end: Date) {
+    const isoDate = (value: Date) => `${value.toISOString().split('.')[0]}Z`;
+    const result = await HealthFitness.getData({
+      parameters: JSON.stringify({
+        Variable: variable,
+        StartDate: isoDate(start),
+        EndDate: isoDate(end),
+        TimeUnit: 'DAY',
+        OperationType: operation,
+        TimeUnitLength: 1,
+        AdvancedQueryReturnType: 'ALL_DATA',
+        AdvancedQueryResultType: 'RAW_DATA',
+      }),
+    });
+    const values = pickHealthValues(result.resultDataPoints).length
+      ? pickHealthValues(result.resultDataPoints)
+      : pickHealthValues(result.results);
+    if (!values.length) return undefined;
+    return operation === 'SUM'
+      ? values.reduce((sum, value) => sum + value, 0)
+      : values.reduce((sum, value) => sum + value, 0) / values.length;
+  }
+
+  async function connectAndSync() {
+    setStatus('syncing');
+    setMessage('A pedir autorização no Health Connect…');
+    try {
+      const inactive = JSON.stringify({ IsActive: false, AccessType: 'READ' });
+      await HealthFitness.requestHealthPermissions({
+        customPermissions: JSON.stringify([
+          { Variable: 'STEPS', AccessType: 'READ' },
+          { Variable: 'CALORIES_BURNED', AccessType: 'READ' },
+          { Variable: 'HEART_RATE', AccessType: 'READ' },
+          { Variable: 'SLEEP', AccessType: 'READ' },
+          { Variable: 'BODY_FAT_PERCENTAGE', AccessType: 'READ' },
+        ]),
+        allVariables: inactive,
+        fitnessVariables: inactive,
+        healthVariables: inactive,
+        profileVariables: inactive,
+        workoutVariables: inactive,
+      });
+      setMessage('A importar os dados de hoje…');
+      const date = localDateKey();
+      const start = new Date(`${date}T00:00:00`);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 1);
+      const [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent] = await Promise.all([
+        queryMetric('STEPS', 'SUM', start, end),
+        queryMetric('CALORIES_BURNED', 'SUM', start, end),
+        queryMetric('HEART_RATE', 'AVERAGE', start, end),
+        queryMetric('SLEEP', 'SUM', start, end),
+        queryMetric('BODY_FAT_PERCENTAGE', 'AVERAGE', start, end),
+      ]);
+      const snapshot: HealthSnapshot = {
+        date,
+        steps: steps === undefined ? undefined : Math.round(steps),
+        activeCalories,
+        averageHeartRate,
+        sleepMinutes,
+        bodyFatPercent,
+        syncedAt: new Date().toISOString(),
+      };
+      setState((current) => ({
+        ...current,
+        healthSnapshots: [...current.healthSnapshots.filter((item) => item.date !== date), snapshot],
+      }));
+      setStatus('done');
+      setMessage('Dados de hoje sincronizados.');
+    } catch (error) {
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Não foi possível ligar ao Health Connect.');
+    }
+  }
+
+  return (
+    <div className="health-connect-panel">
+      <div className="integration-row">
+        <div className="round-icon health"><HeartPulse /></div>
+        <div>
+          <strong>Health Connect</strong>
+          <p>Importa do relógio passos, calorias ativas, ritmo cardíaco, sono e gordura corporal. Os dados só são lidos depois da tua autorização no Android.</p>
+          {latest && <small>Última sincronização: {new Date(latest.syncedAt).toLocaleString('pt-PT')} · {latest.steps?.toLocaleString('pt-PT') ?? '—'} passos</small>}
+          {message && <small className={status === 'error' ? 'health-error' : ''}>{message}</small>}
+          <div className="health-actions">
+            <Button type="button" onClick={connectAndSync} disabled={!native || status === 'syncing'}>{status === 'syncing' ? <LoaderCircle className="spin" /> : <HeartPulse />}{native ? 'Ligar e sincronizar' : 'Disponível no APK 2.0'}</Button>
+            {native && <Button type="button" variant="outline" onClick={() => HealthFitness.openHealthConnect().catch(() => setMessage('Health Connect não está disponível neste dispositivo.'))}>Abrir Health Connect</Button>}
+          </div>
+        </div>
+      </div>
+      <p className="privacy-note">No site, os dados do relógio são apenas visualizados depois de sincronizados pelo APK. <a href="/privacy" target="_blank">Política de privacidade</a>.</p>
+    </div>
+  );
+}
+
+function SettingsPage({
+  state,
+  setState,
+  onReset,
+}: {
+  state: AppState;
+  setState: React.Dispatch<React.SetStateAction<AppState>>;
+  onReset: () => Promise<void>;
 }) {
   const [profile, setProfile] = useState(state.profile);
   const [goals, setGoals] = useState(state.goals);
@@ -2231,6 +2583,15 @@ function SettingsPage({
   const [minutes, setMinutes] = useState(60);
   const [met, setMet] = useState(5);
   const [days, setDays] = useState<number[]>([1, 3, 5]);
+  const [split, setSplit] = useState('full_body');
+  const [bodyFocus, setBodyFocus] = useState<string[]>([]);
+  const [level, setLevel] = useState('intermediate');
+  const [workoutDays, setWorkoutDays] = useState<number[]>([1, 3, 5]);
+  const [workoutTime, setWorkoutTime] = useState('18:00');
+  const [generating, setGenerating] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const draftMaintenance = tdee(profile, state.activities);
+  const draftEstimate = weeksToGoal(profile, goals.calorieTarget, draftMaintenance);
   function saveProfile(event: React.FormEvent) {
     event.preventDefault();
     setState((current) => ({ ...current, profile, goals }));
@@ -2253,6 +2614,38 @@ function SettingsPage({
       ...current,
       activities: [...current.activities, activity],
     }));
+  }
+  async function generateWorkout() {
+    if (!workoutDays.length) return;
+    setGenerating(true);
+    try {
+      const response = await fetch('/api/workout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goal: goals.kind === 'lose_fat' ? 'fat_loss' : goals.kind === 'gain_muscle' ? 'muscle_gain' : 'general_fitness',
+          level,
+          split,
+          bodyFocus,
+        }),
+      });
+      if (!response.ok) throw new Error('workout');
+      const result = (await response.json()) as { source: WorkoutPlan['source']; exercises: WorkoutPlan['exercises'] };
+      const plan: WorkoutPlan = {
+        id: uid(),
+        name: bodyFocus.length
+          ? `Mistura: ${bodyFocus.map((value) => muscleOptions.find((item) => item.value === value)?.label).filter(Boolean).join(', ')}`
+          : splitLabels[split],
+        source: result.source,
+        createdAt: new Date().toISOString(),
+        days: workoutDays,
+        time: workoutTime,
+        exercises: result.exercises,
+      };
+      setState((current) => ({ ...current, workoutPlans: [...current.workoutPlans, plan] }));
+    } finally {
+      setGenerating(false);
+    }
   }
   return (
     <div className="content-page page-enter">
@@ -2277,12 +2670,12 @@ function SettingsPage({
         </div>
         <div>
           <span>Gasto diário</span>
-          <strong>{maintenance} kcal</strong>
-          <small>rotina incluída</small>
+          <strong>{draftMaintenance} kcal</strong>
+          <small>base + atividades MET</small>
         </div>
         <div>
           <span>Objetivo</span>
-          <strong>{estimate === null ? '—' : `${estimate} semanas`}</strong>
+          <strong>{draftEstimate === null ? '—' : `${draftEstimate} semanas`}</strong>
           <small>estimativa matemática</small>
         </div>
         <div>
@@ -2421,12 +2814,11 @@ function SettingsPage({
             <Field label="Objetivo">
               <select
                 value={goals.kind}
-                onChange={(e) =>
-                  setGoals({
-                    ...goals,
-                    kind: e.target.value as typeof goals.kind,
-                  })
-                }
+                onChange={(e) => {
+                  const kind = e.target.value as typeof goals.kind;
+                  const suggested = suggestedGoals(profile, state.activities, kind);
+                  setGoals({ ...goals, kind, calorieDeficit: suggested.calorieDeficit, calorieTarget: suggested.calorieTarget });
+                }}
               >
                 <option value="lose_fat">Perder gordura</option>
                 <option value="maintain">Manter peso</option>
@@ -2434,15 +2826,24 @@ function SettingsPage({
               </select>
             </Field>
             <div className="form-grid two">
+              {goals.kind === 'lose_fat' && (
+                <Field label="Défice pretendido (kcal/dia)">
+                  <NumberInput
+                    value={goals.calorieDeficit}
+                    min={0}
+                    max={1000}
+                    step="25"
+                    onChange={(value) => setGoals({ ...goals, calorieDeficit: value, calorieTarget: Math.max(1000, draftMaintenance - value) })}
+                  />
+                </Field>
+              )}
               <Field label="Calorias (kcal)">
                 <NumberInput
                   value={goals.calorieTarget}
                   min={1000}
                   max={5000}
                   step="10"
-                  onChange={(value) =>
-                    setGoals({ ...goals, calorieTarget: value })
-                  }
+                  onChange={(value) => setGoals({ ...goals, calorieTarget: value, calorieDeficit: Math.max(0, draftMaintenance - value) })}
                 />
               </Field>
               <Field label="Água (L)">
@@ -2552,7 +2953,7 @@ function SettingsPage({
                 <Field label="Minutos">
                   <NumberInput value={minutes} min={5} max={240} step="5" onChange={setMinutes} />
                 </Field>
-                <Field label="Intensidade MET">
+                <Field label={<span className="label-help">Intensidade MET <span className="help-tip" tabIndex={0}><CircleHelp /><span role="tooltip">MET compara o gasto da atividade com o repouso: 1 MET ≈ estar sentado; quanto maior, mais intensa a atividade.</span></span></span>}>
                   <NumberInput value={met} min={1} max={18} step="0.5" onChange={setMet} />
                 </Field>
               </div>
@@ -2585,6 +2986,51 @@ function SettingsPage({
                 <Plus /> Adicionar atividade
               </Button>
             </div>
+            <div className="routine-divider" />
+            <section className="workout-settings-builder">
+              <div>
+                <p className="eyebrow">MUSCULAÇÃO</p>
+                <h3>Sugerir nova rotina</h3>
+                <p>A rotina ficará agendada nos dias e hora escolhidos e aparecerá no ecrã Treino.</p>
+              </div>
+              <div className="form-grid three">
+                <Field label="Divisão">
+                  <select value={split} onChange={(event) => { setSplit(event.target.value); setBodyFocus([]); }}>
+                    {Object.entries(splitLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Nível">
+                  <select value={level} onChange={(event) => setLevel(event.target.value)}>
+                    <option value="beginner">Iniciante</option><option value="intermediate">Intermédio</option><option value="advanced">Avançado</option>
+                  </select>
+                </Field>
+                <Field label="Hora">
+                  <Input type="time" value={workoutTime} onChange={(event) => setWorkoutTime(event.target.value)} />
+                </Field>
+              </div>
+              <Field label="Misturar grupos (opcional)">
+                <div className="muscle-picker">
+                  {muscleOptions.map((muscle) => <button type="button" key={muscle.value} className={bodyFocus.includes(muscle.value) ? 'selected' : ''} onClick={() => setBodyFocus((current) => current.includes(muscle.value) ? current.filter((value) => value !== muscle.value) : [...current, muscle.value])}>{muscle.label}</button>)}
+                </div>
+              </Field>
+              <Field label="Dias do treino">
+                <div className="day-picker">
+                  {fullDayNames.map((day, index) => <button type="button" key={day} className={workoutDays.includes(index) ? 'selected' : ''} onClick={() => setWorkoutDays((current) => current.includes(index) ? current.filter((value) => value !== index) : [...current, index])}>{day}</button>)}
+                </div>
+              </Field>
+              <Button type="button" onClick={generateWorkout} disabled={generating || !workoutDays.length}>
+                {generating ? <LoaderCircle className="spin" /> : <Sparkles />}{generating ? 'A gerar…' : 'Gerar e agendar rotina'}
+              </Button>
+              <div className="scheduled-plans">
+                {state.workoutPlans.map((plan) => (
+                  <div key={plan.id}>
+                    <Dumbbell />
+                    <div><strong>{plan.name}</strong><small>{plan.days?.length ? plan.days.map((day) => fullDayNames[day]).join(', ') : 'Sem dias agendados'} · {plan.time ?? 'Sem hora'} · {plan.exercises.length} exercícios</small></div>
+                    <Button type="button" variant="ghost" size="icon" aria-label={`Apagar rotina ${plan.name}`} onClick={() => setState((current) => ({ ...current, workoutPlans: current.workoutPlans.filter((item) => item.id !== plan.id) }))}><Trash2 /></Button>
+                  </div>
+                ))}
+              </div>
+            </section>
           </CardContent>
         </Card>
         <Card className="panel integration-card">
@@ -2592,6 +3038,7 @@ function SettingsPage({
             <CardTitle>Integrações e referências</CardTitle>
           </CardHeader>
           <CardContent>
+            <HealthConnectPanel state={state} setState={setState} />
             <div className="integration-row">
               <div className="round-icon">
                 <Dumbbell />
@@ -2627,6 +3074,15 @@ function SettingsPage({
             </div>
           </CardContent>
         </Card>
+        <Card className="panel danger-card">
+          <CardHeader>
+            <CardTitle>Recomeçar do zero</CardTitle>
+            <CardDescription>Apaga perfil, refeições, medições, água, jejuns, atividades e rotinas.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button type="button" variant="outline" className="danger-button" onClick={() => setConfirmReset(true)}><Trash2 /> Apagar perfil e todos os dados</Button>
+          </CardContent>
+        </Card>
         <div className="settings-actions">
           <Button size="lg" type="submit">
             <Save /> Guardar alterações
@@ -2637,6 +3093,15 @@ function SettingsPage({
           </p>
         </div>
       </form>
+      {confirmReset && (
+        <div className="dialog-backdrop" role="presentation">
+          <section className="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="reset-title">
+            <h3 id="reset-title">Apagar todo o perfil?</h3>
+            <p>Esta ação remove permanentemente todos os registos da Fitide e volta ao ecrã inicial.</p>
+            <div><Button variant="outline" onClick={() => setConfirmReset(false)}>Cancelar</Button><Button className="danger-button solid" onClick={async () => { setConfirmReset(false); await onReset(); }}>Sim, apagar tudo</Button></div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -2676,7 +3141,7 @@ function Field({
   label,
   children,
 }: {
-  label: string;
+  label: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (

@@ -34,3 +34,9 @@ export async function PUT(request: Request) {
     .run();
   return Response.json({ ok: true, updatedAt });
 }
+
+export async function DELETE() {
+  await ensureTable();
+  await env.DB.prepare('DELETE FROM app_state WHERE id = ?').bind(1).run();
+  return Response.json({ ok: true });
+}

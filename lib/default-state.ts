@@ -21,4 +21,15 @@ export const defaultState: AppState = {
   fasts: [],
   workoutPlans: [],
   workoutSessions: [],
+  intervalPresets: [
+    {
+      id: 'randori-2-1',
+      name: 'Randori curto 2:1',
+      workSeconds: 120,
+      restSeconds: 60,
+      rounds: 7,
+    },
+  ],
+  judoPractices: [],
+  healthSnapshots: [],
 };

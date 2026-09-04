@@ -18,9 +18,14 @@ export function bmr(profile: Profile) {
 
 export function exerciseCaloriesPerWeek(profile: Profile, activities: Activity[]) {
   return activities.reduce(
-    // The sedentary baseline already includes resting energy during the session.
-    // Count only the activity energy above 1 MET to avoid double counting it.
-    (sum, activity) => sum + Math.max(0, activity.met - 1) * profile.currentWeightKg * (activity.minutes / 60) * activity.days.length,
+    // Standard MET conversion: kcal/min = MET × 3.5 × kg / 200.
+    // Subtract 1 MET because the sedentary baseline already includes rest.
+    (sum, activity) => {
+      const met = Math.min(20, Math.max(1, activity.met));
+      const minutes = Math.min(1440, Math.max(0, activity.minutes));
+      const validDays = new Set(activity.days.filter((day) => day >= 0 && day <= 6)).size;
+      return sum + (met - 1) * 3.5 * profile.currentWeightKg / 200 * minutes * validDays;
+    },
     0,
   );
 }
@@ -33,18 +38,26 @@ export function calorieDeficit(maintenance: number, calorieTarget: number) {
   return Math.max(0, Math.round(maintenance - calorieTarget));
 }
 
+export function recommendedDeficit(maintenance: number) {
+  // A moderate starting point that scales with expenditure, bounded to avoid
+  // an implausibly tiny or aggressive automatic suggestion.
+  return Math.min(750, Math.max(250, Math.round((maintenance * 0.18) / 25) * 25));
+}
+
 export function fatEquivalentKg(dailyDeficit: number, days = 7) {
   return Math.round(((dailyDeficit * days) / 7700) * 1000) / 1000;
 }
 
 export function suggestedGoals(profile: Profile, activities: Activity[], kind: Goals['kind']): Goals {
   const maintenance = tdee(profile, activities);
-  const calorieTarget = Math.max(1200, Math.round(maintenance + (kind === 'lose_fat' ? -450 : kind === 'gain_muscle' ? 250 : 0)));
+  const calorieDeficit = kind === 'lose_fat' ? recommendedDeficit(maintenance) : 0;
+  const calorieTarget = Math.max(1000, Math.round(maintenance - calorieDeficit + (kind === 'gain_muscle' ? 250 : 0)));
   const proteinG = Math.round(profile.currentWeightKg * (kind === 'gain_muscle' ? 2 : 1.8));
   const fatG = Math.round(profile.currentWeightKg * 0.8);
   const carbsG = Math.max(50, Math.round((calorieTarget - proteinG * 4 - fatG * 9) / 4));
   return {
     kind,
+    calorieDeficit,
     calorieTarget,
     proteinG,
     carbsG,

@@ -1,7 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Forma</string>
-    <string name="title_activity_main">Forma</string>
+    <string name="app_name">Fitide</string>
+    <string name="title_activity_main">Fitide</string>
     <string name="package_name">com.thaidy.forma</string>
     <string name="custom_url_scheme">com.thaidy.forma</string>
+    <string name="background_notification_title">Fitide</string>    <string name="background_notification_description">A sincronizar dados de saúde autorizados.</string>    <string name="privacy_policy_url">https://forma-pessoal.thaidy-deguchi.chatgpt.site/privacy</string>
 </resources>

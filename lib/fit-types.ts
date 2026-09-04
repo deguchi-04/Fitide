@@ -16,6 +16,7 @@ export interface Profile {
 
 export interface Goals {
   kind: GoalKind;
+  calorieDeficit: number;
   calorieTarget: number;
   proteinG: number;
   carbsG: number;
@@ -93,6 +94,8 @@ export interface WorkoutPlan {
   name: string;
   source: 'WorkoutX' | 'Demonstração';
   createdAt: string;
+  days?: number[];
+  time?: string;
   exercises: WorkoutExercise[];
 }
 
@@ -103,6 +106,36 @@ export interface WorkoutSession {
   minutes: number;
   completedSets: number;
   calories: number;
+}
+
+export interface IntervalPreset {
+  id: string;
+  name: string;
+  workSeconds: number;
+  restSeconds: number;
+  rounds: number;
+}
+
+export interface JudoPractice {
+  id: string;
+  date: string;
+  durationMinutes: number;
+  techniqueIds: string[];
+  uchikomiReps: number;
+  randoriRounds: number;
+  randoriMinutes: number;
+  notes: string;
+  createdAt: string;
+}
+
+export interface HealthSnapshot {
+  date: string;
+  steps?: number;
+  activeCalories?: number;
+  averageHeartRate?: number;
+  sleepMinutes?: number;
+  bodyFatPercent?: number;
+  syncedAt: string;
 }
 
 export interface AppState {
@@ -116,4 +149,7 @@ export interface AppState {
   activeFastStart?: string;
   workoutPlans: WorkoutPlan[];
   workoutSessions: WorkoutSession[];
+  intervalPresets: IntervalPreset[];
+  judoPractices: JudoPractice[];
+  healthSnapshots: HealthSnapshot[];
 }

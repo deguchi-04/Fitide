@@ -1,0 +1,33 @@
+export default function PrivacyPage() {
+  return (
+    <main className="privacy-page">
+      <article>
+        <p className="eyebrow">FITIDE · PRIVACIDADE</p>
+        <h1>Dados de saúde sob o teu controlo</h1>
+        <p>
+          A Fitide é uma aplicação de uso pessoal. Quando autorizas o Health
+          Connect, a aplicação lê apenas os dados escolhidos por ti — passos,
+          calorias ativas, frequência cardíaca, sono e percentagem de gordura —
+          para os apresentar no teu painel.
+        </p>
+        <h2>Como os dados são usados</h2>
+        <p>
+          Os dados importados servem exclusivamente para acompanhar a tua
+          rotina. Não são vendidos, usados para publicidade nem partilhados
+          com terceiros. A cópia sincronizada fica na base privada da tua
+          aplicação.
+        </p>
+        <h2>Escolha e eliminação</h2>
+        <p>
+          Podes negar ou revogar permissões no Health Connect a qualquer
+          momento. Em Definições também podes apagar o perfil e todos os dados
+          guardados na Fitide.
+        </p>
+        <p>
+          A Fitide fornece estimativas de bem-estar e não substitui orientação
+          médica ou nutricional profissional.
+        </p>
+      </article>
+    </main>
+  );
+}

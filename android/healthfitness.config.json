@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "STEPS": "Read",
+    "CALORIES_BURNED": "Read",
+    "HEART_RATE": "Read",
+    "SLEEP": "Read",
+    "BODY_FAT_PERCENTAGE": "Read"
+  },
+  "disableBackgroundJobs": true,
+  "disableReadHealthDataHistory": true,
+  "privacyPolicyUrl": "https://forma-pessoal.thaidy-deguchi.chatgpt.site/privacy",
+  "backgroundNotificationTitle": "Fitide",
+  "backgroundNotificationDescription": "A sincronizar dados de saúde autorizados."
+}
