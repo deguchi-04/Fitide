@@ -99,6 +99,7 @@ import {
   type JudoCategory,
 } from '@/lib/judo';
 import { foodCatalog, type FoodCatalogItem } from '@/lib/food-catalog';
+import { parseMealDescription } from '@/lib/meal-parser';
 
 interface WorkoutTimerNativePlugin {
   start(options: { name: string; mode: 'interval' | 'free'; workSeconds: number; restSeconds: number; rounds: number }): Promise<void>;
@@ -223,14 +224,27 @@ const foodSynonymGroups = [
   ['vaca', 'boi', 'bovino'],
   ['konbu', 'kombu'],
   ['proteina de soro', 'whey protein', 'whey'],
+  ['wrap', 'wraps', 'wrpas', 'tortilha', 'tortilla'],
 ];
 
 type QuantityMode = 'g' | 'unit' | 'ml';
+
+interface MealAssistantDraft {
+  id: string;
+  original: string;
+  query: string;
+  amount: number;
+  unit: QuantityMode;
+  foodId: string;
+  candidateIds: string[];
+  score: number;
+}
 
 const unitWeightRules: Array<[RegExp, number]> = [
   [/ovo/, 55], [/banana/, 120], [/(laranja|orange)/, 180], [/(maca|apple)/, 160],
   [/(pera|pear)/, 170], [/(kiwi)/, 75], [/(tangerina|mandarina)/, 120], [/(pessego|peach)/, 150],
   [/(tomate|tomato)/, 120], [/(cebola|onion)/, 110], [/(batata|potato)/, 150], [/(pao|bread)/, 50],
+  [/(wrap|tortilha|tortilla)/, 49],
 ];
 
 function averageUnitGrams(foodName: string) {
@@ -1326,6 +1340,9 @@ function MealDialog({
   const [manualName, setManualName] = useState('');
   const [saveToCatalog, setSaveToCatalog] = useState(false);
   const [editingFoodId, setEditingFoodId] = useState<string | null>(null);
+  const [assistantText, setAssistantText] = useState('');
+  const [assistantDrafts, setAssistantDrafts] = useState<MealAssistantDraft[]>([]);
+  const [assistantMessage, setAssistantMessage] = useState('');
   const [manual, setManual] = useState<Record<keyof Nutrients, number | ''>>({
     calories: '',
     protein: '',
@@ -1491,6 +1508,74 @@ function MealDialog({
     setSaveToCatalog(true);
   }
 
+  function analyzeMealDescription() {
+    const parsed = parseMealDescription(assistantText);
+    if (!parsed.length) {
+      setAssistantDrafts([]);
+      setAssistantMessage('Escreve pelo menos um alimento e a respetiva quantidade.');
+      return;
+    }
+
+    const drafts = parsed.map((part) => {
+      const ranked = availableFoods
+        .map((food) => ({ food, score: foodMatchScore(part.query, food.name) }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score || a.food.name.localeCompare(b.food.name, 'pt'))
+        .slice(0, 5);
+      return {
+        id: uid(),
+        ...part,
+        foodId: ranked[0]?.food.id ?? '',
+        candidateIds: ranked.map(({ food }) => food.id),
+        score: ranked[0]?.score ?? 0,
+      };
+    });
+
+    setAssistantDrafts(drafts);
+    const unresolved = drafts.filter((draft) => !draft.foodId).length;
+    setAssistantMessage(unresolved
+      ? `${drafts.length - unresolved} de ${drafts.length} ingredientes reconhecidos. Corrige os restantes antes de adicionar.`
+      : `${drafts.length} ingredientes reconhecidos. Confirma as sugestões abaixo.`);
+  }
+
+  function assistantDraftGrams(draft: MealAssistantDraft) {
+    const food = availableFoods.find((item) => item.id === draft.foodId);
+    if (!food) return 0;
+    if (draft.unit === 'unit') return draft.amount * averageUnitGrams(food.name);
+    if (draft.unit === 'ml') return draft.amount * liquidDensity(food.name);
+    return draft.amount;
+  }
+
+  function addAssistantIngredients() {
+    const recognized = assistantDrafts.flatMap((draft) => {
+      const food = availableFoods.find((item) => item.id === draft.foodId);
+      const convertedGrams = assistantDraftGrams(draft);
+      if (!food || !convertedGrams) return [];
+      const factor = convertedGrams / 100;
+      return [{
+        id: uid(),
+        name: food.name,
+        grams: Math.round(convertedGrams * 10) / 10,
+        source: 'Catálogo' as const,
+        ...roundNutrients({
+          calories: food.calories * factor,
+          protein: food.protein * factor,
+          carbs: food.carbs * factor,
+          fat: food.fat * factor,
+          fiber: food.fiber * factor,
+          calcium: food.calcium * factor,
+          iron: food.iron * factor,
+          vitaminC: food.vitaminC * factor,
+        }),
+      }];
+    });
+    if (!recognized.length) return;
+    setIngredients((current) => [...current, ...recognized]);
+    setAssistantText('');
+    setAssistantDrafts([]);
+    setAssistantMessage(`${recognized.length} ingredientes adicionados à refeição.`);
+  }
+
   return (
     <div className="dialog-backdrop" role="presentation">
       <section
@@ -1509,6 +1594,93 @@ function MealDialog({
           </Button>
         </header>
         <div className="dialog-scroll">
+          <section className="meal-assistant" aria-labelledby="meal-assistant-title">
+            <div className="meal-assistant-heading">
+              <span><Sparkles /></span>
+              <div>
+                <strong id="meal-assistant-title">Montar refeição com o assistente</strong>
+                <small>Descreve tudo de uma vez; revê as correspondências antes de adicionar.</small>
+              </div>
+            </div>
+            <textarea
+              value={assistantText}
+              rows={3}
+              placeholder="Ex.: 1 maçã, 50 g de lentilhas, 2 wraps e 250 ml de leite"
+              onChange={(event) => {
+                setAssistantText(event.target.value);
+                setAssistantMessage('');
+              }}
+            />
+            <div className="meal-assistant-actions">
+              <small>{assistantMessage || 'Também entende kg, litros, unidades e quantidades por extenso.'}</small>
+              <Button type="button" disabled={!assistantText.trim()} onClick={analyzeMealDescription}>
+                <Sparkles /> Interpretar prato
+              </Button>
+            </div>
+            {assistantDrafts.length > 0 && (
+              <div className="meal-assistant-results">
+                {assistantDrafts.map((draft) => {
+                  const food = availableFoods.find((item) => item.id === draft.foodId);
+                  const convertedGrams = assistantDraftGrams(draft);
+                  return (
+                    <article key={draft.id} className={!food ? 'unresolved' : ''}>
+                      <div className="assistant-food-match">
+                        <small>{draft.original}</small>
+                        {draft.candidateIds.length ? (
+                          <select
+                            aria-label={`Alimento correspondente a ${draft.original}`}
+                            value={draft.foodId}
+                            onChange={(event) => setAssistantDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, foodId: event.target.value } : item))}
+                          >
+                            {draft.candidateIds.map((candidateId) => {
+                              const candidate = availableFoods.find((item) => item.id === candidateId);
+                              return candidate ? <option key={candidate.id} value={candidate.id}>{candidate.name}</option> : null;
+                            })}
+                          </select>
+                        ) : (
+                          <strong>Alimento não encontrado</strong>
+                        )}
+                      </div>
+                      <NumberInput
+                        value={draft.amount}
+                        min={draft.unit === 'unit' ? 0.5 : 1}
+                        max={draft.unit === 'unit' ? 30 : 5000}
+                        step={draft.unit === 'unit' ? '0.5' : '1'}
+                        ariaLabel={`Quantidade de ${draft.query}`}
+                        onChange={(value) => setAssistantDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, amount: Number(value) } : item))}
+                      />
+                      <select
+                        className="assistant-unit"
+                        aria-label={`Unidade de ${draft.query}`}
+                        value={draft.unit}
+                        onChange={(event) => setAssistantDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, unit: event.target.value as QuantityMode } : item))}
+                      >
+                        <option value="g">g</option>
+                        <option value="unit">unid.</option>
+                        <option value="ml">ml</option>
+                      </select>
+                      <div className="assistant-estimate">
+                        <strong>{food ? `${Math.round(food.calories * convertedGrams / 100)} kcal` : '—'}</strong>
+                        <small>{food ? `${Math.round(convertedGrams)} g estimados` : 'Pesquisa manual necessária'}</small>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Remover ${draft.original}`}
+                        onClick={() => setAssistantDrafts((current) => current.filter((item) => item.id !== draft.id))}
+                      >
+                        <X />
+                      </Button>
+                    </article>
+                  );
+                })}
+                <Button type="button" disabled={!assistantDrafts.some((draft) => draft.foodId)} onClick={addAssistantIngredients}>
+                  <Plus /> Adicionar ingredientes reconhecidos
+                </Button>
+              </div>
+            )}
+          </section>
           <div className="form-grid two">
             <Field label="Tipo de refeição">
               <select
@@ -3065,7 +3237,7 @@ function HealthConnectPanel({
           {latest && <small>Última sincronização: {new Date(latest.syncedAt).toLocaleString('pt-PT')} · {latest.steps?.toLocaleString('pt-PT') ?? '—'} passos</small>}
           {message && <small className={status === 'error' ? 'health-error' : ''}>{message}</small>}
           <div className="health-actions">
-            <Button type="button" onClick={connectAndSync} disabled={!native || status === 'syncing'}>{status === 'syncing' ? <LoaderCircle className="spin" /> : <HeartPulse />}{native ? 'Ligar e sincronizar' : 'Disponível no APK 2.1'}</Button>
+            <Button type="button" onClick={connectAndSync} disabled={!native || status === 'syncing'}>{status === 'syncing' ? <LoaderCircle className="spin" /> : <HeartPulse />}{native ? 'Ligar e sincronizar' : 'Disponível no APK'}</Button>
             {native && <Button type="button" variant="outline" onClick={() => HealthFitness.openHealthConnect().catch(() => setMessage('Health Connect não está disponível neste dispositivo.'))}>Abrir Health Connect</Button>}
           </div>
         </div>

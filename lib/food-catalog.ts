@@ -21,6 +21,18 @@ function foodKey(value: string) {
 // normalizada são mantidos apenas uma vez, com preferência pela tabela mais atual.
 const merged = [
   {
+    id: 'usda-173242',
+    name: 'Wrap ou tortilha de trigo, pronta',
+    calories: 325,
+    protein: 8.7,
+    carbs: 55.6,
+    fat: 7.1,
+    fiber: 3.3,
+    calcium: 39,
+    iron: 3.3,
+    vitaminC: 0,
+  },
+  {
     id: 'usda-173180',
     name: 'Whey protein em pó, à base de soro de leite',
     calories: 352,
