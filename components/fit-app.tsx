@@ -229,6 +229,22 @@ const foodSynonymGroups = [
 
 type QuantityMode = 'g' | 'unit' | 'ml';
 
+interface NumberUnitOption {
+  value: QuantityMode;
+  label: string;
+  suffix: string;
+  min: number;
+  max: number;
+  step: string;
+  defaultValue: number;
+}
+
+const foodQuantityOptions: NumberUnitOption[] = [
+  { value: 'g', label: 'gramas', suffix: 'g', min: 1, max: 2000, step: '1', defaultValue: 100 },
+  { value: 'unit', label: 'unid.', suffix: 'unid.', min: 0.5, max: 30, step: '0.5', defaultValue: 1 },
+  { value: 'ml', label: 'ml', suffix: 'ml', min: 1, max: 2000, step: '1', defaultValue: 250 },
+];
+
 interface MealAssistantDraft {
   id: string;
   original: string;
@@ -1643,22 +1659,12 @@ function MealDialog({
                       </div>
                       <NumberInput
                         value={draft.amount}
-                        min={draft.unit === 'unit' ? 0.5 : 1}
-                        max={draft.unit === 'unit' ? 30 : 5000}
-                        step={draft.unit === 'unit' ? '0.5' : '1'}
                         ariaLabel={`Quantidade de ${draft.query}`}
+                        unit={draft.unit}
+                        unitOptions={foodQuantityOptions}
+                        onUnitChange={(unit) => setAssistantDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, unit } : item))}
                         onChange={(value) => setAssistantDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, amount: Number(value) } : item))}
                       />
-                      <select
-                        className="assistant-unit"
-                        aria-label={`Unidade de ${draft.query}`}
-                        value={draft.unit}
-                        onChange={(event) => setAssistantDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, unit: event.target.value as QuantityMode } : item))}
-                      >
-                        <option value="g">g</option>
-                        <option value="unit">unid.</option>
-                        <option value="ml">ml</option>
-                      </select>
                       <div className="assistant-estimate">
                         <strong>{food ? `${Math.round(food.calories * convertedGrams / 100)} kcal` : '—'}</strong>
                         <small>{food ? `${Math.round(convertedGrams)} g estimados` : 'Pesquisa manual necessária'}</small>
@@ -1765,14 +1771,14 @@ function MealDialog({
                 </div>
               </Field>
               <Field label="Quantidade">
-                <div className="quantity-control">
-                  <div className="quantity-modes" aria-label="Unidade da quantidade">
-                    {([['g', 'gramas'], ['unit', 'unid.'], ['ml', 'ml']] as Array<[QuantityMode, string]>).map(([value, label]) => (
-                      <button type="button" key={value} className={quantityMode === value ? 'selected' : ''} onClick={() => { setQuantityMode(value); setGrams(value === 'unit' ? 1 : value === 'ml' ? 250 : 100); }}>{label}</button>
-                    ))}
-                  </div>
-                  <NumberInput value={grams} min={quantityMode === 'unit' ? 0.5 : 1} max={quantityMode === 'unit' ? 30 : 2000} step={quantityMode === 'unit' ? '0.5' : '1'} ariaLabel="Quantidade do alimento" onChange={setGrams} />
-                </div>
+                <NumberInput
+                  value={grams}
+                  ariaLabel="Quantidade do alimento"
+                  unit={quantityMode}
+                  unitOptions={foodQuantityOptions}
+                  onUnitChange={setQuantityMode}
+                  onChange={setGrams}
+                />
               </Field>
               <Button type="button" onClick={addIngredient}>
                 <Plus /> Adicionar
@@ -3846,6 +3852,9 @@ function NumberInput({
   min = 0,
   max = 500,
   ariaLabel,
+  unit,
+  unitOptions,
+  onUnitChange,
 }: {
   value: number | '';
   onChange: (value: number) => void;
@@ -3853,20 +3862,30 @@ function NumberInput({
   min?: number;
   max?: number;
   ariaLabel?: string;
+  unit?: QuantityMode;
+  unitOptions?: NumberUnitOption[];
+  onUnitChange?: (unit: QuantityMode) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const increment = Number(step);
-  const precision = step.includes('.') ? step.split('.')[1].length : 0;
+  const [draftUnit, setDraftUnit] = useState<QuantityMode>(unit ?? unitOptions?.[0]?.value ?? 'g');
+  const activeUnitOption = unitOptions?.find((option) => option.value === draftUnit);
+  const effectiveStep = activeUnitOption?.step ?? step;
+  const effectiveMin = activeUnitOption?.min ?? min;
+  const effectiveMax = activeUnitOption?.max ?? max;
+  const increment = Number(effectiveStep);
+  const precision = effectiveStep.includes('.') ? effectiveStep.split('.')[1].length : 0;
   const options = useMemo(() => {
     const values: number[] = [];
-    const count = Math.floor((max - min) / increment);
+    const count = Math.floor((effectiveMax - effectiveMin) / increment);
     for (let index = 0; index <= count; index += 1) {
-      values.push(Number((min + index * increment).toFixed(precision)));
+      values.push(Number((effectiveMin + index * increment).toFixed(precision)));
     }
-    if (value !== '' && !values.includes(value)) values.push(value);
+    if (value !== '' && value >= effectiveMin && value <= effectiveMax && !values.includes(value)) values.push(value);
     return values.sort((a, b) => a - b);
-  }, [increment, max, min, precision, value]);
-  const initialValue = value === '' ? options[0] : value;
+  }, [effectiveMax, effectiveMin, increment, precision, value]);
+  const initialValue = value === '' || value < effectiveMin || value > effectiveMax
+    ? activeUnitOption?.defaultValue ?? options[0]
+    : value;
   const [draft, setDraft] = useState(initialValue);
   const [manualDraft, setManualDraft] = useState(String(initialValue));
   const wheelRef = useRef<HTMLDivElement>(null);
@@ -3879,21 +3898,30 @@ function NumberInput({
     return () => window.removeEventListener('fitide-back', close);
   }, [open]);
 
-  function formatOption(option: number) {
+  function formatNumber(option: number, digits: number) {
     return option.toLocaleString('pt-PT', {
-      minimumFractionDigits: precision,
-      maximumFractionDigits: precision,
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
     });
   }
 
+  function formatOption(option: number) {
+    return formatNumber(option, precision);
+  }
+
+  const committedUnitOption = unitOptions?.find((option) => option.value === unit);
+  const committedStep = committedUnitOption?.step ?? step;
+  const committedPrecision = committedStep.includes('.') ? committedStep.split('.')[1].length : 0;
+  const triggerSuffix = committedUnitOption?.suffix;
+
   useEffect(() => {
     if (!open) return;
-    const index = Math.max(0, options.indexOf(initialValue));
+    const index = Math.max(0, options.indexOf(draft));
     const frame = window.requestAnimationFrame(() => {
       if (wheelRef.current) wheelRef.current.scrollTop = index * itemHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [initialValue, open, options]);
+  }, [draftUnit, open, options]);
 
   function selectAtScroll() {
     const index = Math.min(
@@ -3908,7 +3936,7 @@ function NumberInput({
   function parsedManualValue() {
     const parsed = Number(manualDraft.trim().replace(',', '.'));
     if (!Number.isFinite(parsed)) return draft;
-    return Number(Math.min(max, Math.max(min, parsed)).toFixed(precision));
+    return Number(Math.min(effectiveMax, Math.max(effectiveMin, parsed)).toFixed(precision));
   }
 
   return (
@@ -3919,12 +3947,18 @@ function NumberInput({
         aria-label={ariaLabel}
         onClick={(event) => {
           event.currentTarget.blur();
-          setDraft(initialValue);
-          setManualDraft(formatOption(initialValue));
+          const openingUnit = unit ?? unitOptions?.[0]?.value ?? 'g';
+          const openingOption = unitOptions?.find((option) => option.value === openingUnit);
+          const openingStep = openingOption?.step ?? step;
+          const openingPrecision = openingStep.includes('.') ? openingStep.split('.')[1].length : 0;
+          const openingValue = value === '' ? openingOption?.defaultValue ?? min : value;
+          setDraftUnit(openingUnit);
+          setDraft(openingValue);
+          setManualDraft(formatNumber(openingValue, openingPrecision));
           setOpen(true);
         }}
       >
-        <span>{value === '' ? '—' : formatOption(value)}</span>
+        <span>{value === '' ? '—' : `${formatNumber(value, committedPrecision)}${triggerSuffix ? ` ${triggerSuffix}` : ''}`}</span>
         <small>deslizar ou escrever</small>
       </button>
       {open && (
@@ -3943,6 +3977,25 @@ function NumberInput({
               </div>
               <Button type="button" variant="ghost" size="icon" aria-label="Fechar seletor" onClick={() => setOpen(false)}><X /></Button>
             </header>
+            {unitOptions?.length ? (
+              <div className="number-wheel-unit-picker" aria-label="Unidade da quantidade">
+                {unitOptions.map((option) => (
+                  <button
+                    type="button"
+                    key={option.value}
+                    className={draftUnit === option.value ? 'selected' : ''}
+                    onClick={() => {
+                      const nextPrecision = option.step.includes('.') ? option.step.split('.')[1].length : 0;
+                      setDraftUnit(option.value);
+                      setDraft(option.defaultValue);
+                      setManualDraft(formatNumber(option.defaultValue, nextPrecision));
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div className="number-wheel-shell">
               <div className="number-wheel-highlight" />
               <div className="number-wheel" ref={wheelRef} role="listbox" onScroll={selectAtScroll}>
@@ -3976,7 +4029,7 @@ function NumberInput({
             </div>
             <footer>
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
-              <Button type="button" onClick={() => { onChange(parsedManualValue()); setOpen(false); }}>Confirmar</Button>
+              <Button type="button" onClick={() => { onChange(parsedManualValue()); if (unitOptions?.length) onUnitChange?.(draftUnit); setOpen(false); }}>Confirmar</Button>
             </footer>
           </section>
         </div></OverlayPortal>
