@@ -1360,6 +1360,17 @@ function MealDialog({
         },
       ]);
       setManualName('');
+      setManual({
+        calories: '',
+        protein: '',
+        carbs: '',
+        fat: '',
+        fiber: '',
+        calcium: '',
+        iron: '',
+        vitaminC: '',
+      });
+      setGrams(100);
     }
   }
 
