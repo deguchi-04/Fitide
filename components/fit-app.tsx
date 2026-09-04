@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity as ActivityIcon,
   Apple,
@@ -2712,6 +2712,7 @@ function NumberInput({
   max?: number;
   ariaLabel?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const increment = Number(step);
   const precision = step.includes('.') ? step.split('.')[1].length : 0;
   const options = useMemo(() => {
@@ -2723,23 +2724,91 @@ function NumberInput({
     if (value !== '' && !values.includes(value)) values.push(value);
     return values.sort((a, b) => a - b);
   }, [increment, max, min, precision, value]);
+  const initialValue = value === '' ? options[0] : value;
+  const [draft, setDraft] = useState(initialValue);
+  const wheelRef = useRef<HTMLDivElement>(null);
+  const itemHeight = 56;
+
+  function formatOption(option: number) {
+    return option.toLocaleString('pt-PT', {
+      minimumFractionDigits: precision,
+      maximumFractionDigits: precision,
+    });
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    setDraft(initialValue);
+    const index = Math.max(0, options.indexOf(initialValue));
+    const frame = window.requestAnimationFrame(() => {
+      wheelRef.current?.scrollTo({ top: index * itemHeight });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [initialValue, open, options]);
+
+  function selectAtScroll() {
+    const index = Math.min(
+      options.length - 1,
+      Math.max(0, Math.round((wheelRef.current?.scrollTop ?? 0) / itemHeight)),
+    );
+    setDraft(options[index]);
+  }
+
   return (
-    <select
-      className="number-picker"
-      aria-label={ariaLabel}
-      value={value}
-      onChange={(event) => onChange(Number(event.target.value))}
-    >
-      {value === '' && <option value="">—</option>}
-      {options.map((option) => (
-        <option key={option} value={option}>
-          {option.toLocaleString('pt-PT', {
-            minimumFractionDigits: precision,
-            maximumFractionDigits: precision,
-          })}
-        </option>
-      ))}
-    </select>
+    <>
+      <button
+        type="button"
+        className="number-picker-trigger"
+        aria-label={ariaLabel}
+        onClick={() => setOpen(true)}
+      >
+        <span>{value === '' ? '—' : formatOption(value)}</span>
+        <small>deslizar para escolher</small>
+      </button>
+      {open && (
+        <div
+          className="number-wheel-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setOpen(false);
+          }}
+        >
+          <section className="number-wheel-card" role="dialog" aria-modal="true" aria-label={ariaLabel ?? 'Selecionar valor'}>
+            <header>
+              <div>
+                <p className="eyebrow">SELECIONAR VALOR</p>
+                <h3>{ariaLabel ?? 'Escolha o valor'}</h3>
+              </div>
+              <Button type="button" variant="ghost" size="icon" aria-label="Fechar seletor" onClick={() => setOpen(false)}><X /></Button>
+            </header>
+            <div className="number-wheel-shell">
+              <div className="number-wheel-highlight" />
+              <div className="number-wheel" ref={wheelRef} role="listbox" onScroll={selectAtScroll}>
+                {options.map((option) => (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={draft === option}
+                    className={draft === option ? 'selected' : ''}
+                    key={option}
+                    onClick={() => {
+                      setDraft(option);
+                      wheelRef.current?.scrollTo({ top: options.indexOf(option) * itemHeight, behavior: 'smooth' });
+                    }}
+                  >
+                    {formatOption(option)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <footer>
+              <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
+              <Button type="button" onClick={() => { onChange(draft); setOpen(false); }}>Confirmar</Button>
+            </footer>
+          </section>
+        </div>
+      )}
+    </>
   );
 }
 function EmptyState({
