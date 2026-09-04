@@ -233,8 +233,8 @@ function formatLiters(value: number) {
 function FitideLogo() {
   return (
     <svg viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M7 7.5h17M7 15.5h12M7 7.5v17" />
-      <path className="logo-accent" d="M17.5 24.5c3.7-1.2 6.2-3.9 7.5-8" />
+      <path className="logo-fill" d="M7 25V8h18l-3 5H13v3h7l-3 5h-4v4H7Z" />
+      <path className="logo-accent" d="m19 25 6-6m-4 0h4v4" />
     </svg>
   );
 }
@@ -2217,6 +2217,15 @@ function CalendarPage({
     (entry) => localDateKey(new Date(entry.end)) === selectedDate,
   );
   const todayKey = localDateKey();
+  const firstRecordDate = [
+    ...state.meals.map((entry) => entry.date),
+    ...state.weights.map((entry) => entry.date),
+    ...state.water.map((entry) => entry.date),
+    ...state.fasts.map((entry) => localDateKey(new Date(entry.end))),
+    ...state.workoutSessions.map((entry) => entry.date),
+    ...state.judoPractices.map((entry) => entry.date),
+    ...state.healthSnapshots.map((entry) => entry.date),
+  ].sort()[0];
   const fastingMetForDate = (key: string) => state.fasts.some((entry) => {
     const durationHours = (new Date(entry.end).getTime() - new Date(entry.start).getTime()) / 3_600_000;
     return localDateKey(new Date(entry.end)) === key && durationHours >= state.goals.fastingHours;
@@ -2270,7 +2279,11 @@ function CalendarPage({
               ))}
               {days.map((day) => {
                 const key = localDateKey(day);
-                const fastStatus = key === todayKey ? 'today' : key < todayKey ? (fastingMetForDate(key) ? 'met' : 'missed') : '';
+                const fastStatus = key === todayKey
+                  ? 'today'
+                  : key < todayKey && firstRecordDate && key >= firstRecordDate
+                    ? (fastingMetForDate(key) ? 'met' : 'missed')
+                    : '';
                 return (
                   <button
                     key={key}
@@ -2330,7 +2343,7 @@ function CalendarPage({
               )}
             </div>
             <Button className="wide-button open-day-button" onClick={onOpenDay}>
-              <Plus /> Adicionar ou corrigir registos deste dia
+              <Plus /> Adicionar ou corrigir registos
             </Button>
           </CardContent>
         </Card>
