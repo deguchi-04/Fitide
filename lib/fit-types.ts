@@ -49,7 +49,7 @@ export interface IngredientEntry extends Nutrients {
   id: string;
   name: string;
   grams: number;
-  source: 'TACO' | 'Rótulo';
+  source: 'PortFIR' | 'TACO' | 'Rótulo';
 }
 
 export interface Meal {
@@ -128,6 +128,29 @@ export interface JudoPractice {
   createdAt: string;
 }
 
+export interface JudoLearningGoal {
+  id: string;
+  techniqueId?: string;
+  name: string;
+  mediaUrl?: string;
+  notes: string;
+  progress: number;
+}
+
+export interface JudoProfile {
+  belt: string;
+  tokuiWazaIds: string[];
+  learningGoals: JudoLearningGoal[];
+  scores: {
+    technique: number;
+    physical: number;
+    mental: number;
+    conditioning: number;
+    knowledge: number;
+    matchPrep: number;
+  };
+}
+
 export interface HealthSnapshot {
   date: string;
   steps?: number;
@@ -151,5 +174,6 @@ export interface AppState {
   workoutSessions: WorkoutSession[];
   intervalPresets: IntervalPreset[];
   judoPractices: JudoPractice[];
+  judoProfile: JudoProfile;
   healthSnapshots: HealthSnapshot[];
 }

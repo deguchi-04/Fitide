@@ -31,5 +31,18 @@ export const defaultState: AppState = {
     },
   ],
   judoPractices: [],
+  judoProfile: {
+    belt: 'Branca',
+    tokuiWazaIds: [],
+    learningGoals: [],
+    scores: {
+      technique: 45,
+      physical: 50,
+      mental: 50,
+      conditioning: 50,
+      knowledge: 40,
+      matchPrep: 35,
+    },
+  },
   healthSnapshots: [],
 };

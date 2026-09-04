@@ -11,10 +11,6 @@ const config: CapacitorConfig = {
     allowNavigation: [
       'forma-pessoal.thaidy-deguchi.chatgpt.site',
       '*.chatgpt.site',
-      'chatgpt.com',
-      '*.chatgpt.com',
-      'auth.openai.com',
-      '*.openai.com',
     ],
   },
 };

@@ -8,6 +8,7 @@ import {
   BookOpen,
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CirclePause,
@@ -43,8 +44,13 @@ import {
   YAxis,
   Pie,
   PieChart,
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
 } from 'recharts';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { HealthFitness } from '@capacitor/health-fitness';
 import { Button } from '@/components/ui/button';
 import {
@@ -80,16 +86,26 @@ import type {
   Nutrients,
   Profile,
   HealthSnapshot,
+  WorkoutExercise,
   WorkoutPlan,
 } from '@/lib/fit-types';
 import {
-  ijfTechniqueUrl,
   judoTechniques,
   KODOKAN_DEFINITIONS_URL,
   KODOKAN_TECHNIQUES_URL,
   type JudoCategory,
 } from '@/lib/judo';
-import { tacoFoods, TACO_URL } from '@/lib/taco';
+import { portfirFoods, PORTFIR_URL } from '@/lib/portfir';
+
+interface WorkoutTimerNativePlugin {
+  start(options: { name: string; mode: 'interval' | 'free'; workSeconds: number; restSeconds: number; rounds: number }): Promise<void>;
+  pause(): Promise<void>;
+  resume(): Promise<void>;
+  skip(): Promise<void>;
+  stop(): Promise<void>;
+}
+
+const NativeWorkoutTimer = registerPlugin<WorkoutTimerNativePlugin>('WorkoutTimer');
 
 type Page =
   | 'today'
@@ -116,6 +132,15 @@ const navItems = [
   { id: 'judo' as Page, label: 'Judô', icon: BookOpen },
   { id: 'calendar' as Page, label: 'Calendário', icon: CalendarDays },
   { id: 'progress' as Page, label: 'Progresso', icon: Scale },
+];
+const pageOrder: Page[] = ['today', 'calendar', 'meals', 'workout', 'judo', 'progress', 'settings'];
+const mobileNavItems = [
+  { id: 'today' as Page, label: 'Hoje', icon: Home },
+  { id: 'calendar' as Page, label: 'Calendário', icon: CalendarDays },
+  { id: 'meals' as Page, label: 'Refeições', icon: Utensils },
+  { id: 'workout' as Page, label: 'Treino', icon: Dumbbell },
+  { id: 'progress' as Page, label: 'Progresso', icon: Scale },
+  { id: 'settings' as Page, label: 'Definições', icon: Settings },
 ];
 const dayNames = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 const fullDayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -230,6 +255,11 @@ function formatDuration(totalSeconds: number) {
   return `${hours ? `${String(hours).padStart(2, '0')}:` : ''}${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function youtubeIdFromUrl(url: string) {
+  const match = url.match(/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:watch\?v=|embed\/|shorts\/))([A-Za-z0-9_-]{6,})/);
+  return match?.[1];
+}
+
 function mergeState(saved: Partial<AppState>): AppState {
   return {
     ...defaultState,
@@ -245,6 +275,16 @@ function mergeState(saved: Partial<AppState>): AppState {
     workoutSessions: saved.workoutSessions ?? [],
     intervalPresets: saved.intervalPresets ?? defaultState.intervalPresets,
     judoPractices: saved.judoPractices ?? [],
+    judoProfile: {
+      ...defaultState.judoProfile,
+      ...saved.judoProfile,
+      scores: {
+        ...defaultState.judoProfile.scores,
+        ...saved.judoProfile?.scores,
+      },
+      tokuiWazaIds: saved.judoProfile?.tokuiWazaIds ?? [],
+      learningGoals: saved.judoProfile?.learningGoals ?? [],
+    },
     healthSnapshots: saved.healthSnapshots ?? [],
   };
 }
@@ -259,6 +299,7 @@ export default function FitApp() {
   );
   const [mealOpen, setMealOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     fetch('/api/state')
@@ -365,8 +406,25 @@ export default function FitApp() {
       profile: { ...defaultState.profile },
       goals: { ...defaultState.goals },
       activities: [], meals: [], weights: [], water: [], fasts: [], workoutPlans: [], workoutSessions: [],
-      intervalPresets: [...defaultState.intervalPresets], judoPractices: [], healthSnapshots: [],
+      intervalPresets: [...defaultState.intervalPresets], judoPractices: [],
+      judoProfile: { ...defaultState.judoProfile, scores: { ...defaultState.judoProfile.scores }, tokuiWazaIds: [], learningGoals: [] },
+      healthSnapshots: [],
     });
+  }
+
+  function handleSwipeEnd(event: React.TouchEvent<HTMLElement>) {
+    const start = swipeStart.current;
+    swipeStart.current = null;
+    if (!start || event.changedTouches.length !== 1) return;
+    const target = event.target as HTMLElement;
+    if (target.closest('input, textarea, select, [role="dialog"], .number-wheel-card, .chart-range')) return;
+    const touch = event.changedTouches[0];
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.35) return;
+    const index = pageOrder.indexOf(page);
+    const nextIndex = dx < 0 ? Math.min(pageOrder.length - 1, index + 1) : Math.max(0, index - 1);
+    if (nextIndex !== index) setPage(pageOrder[nextIndex]);
   }
 
   if (!loaded) {
@@ -414,7 +472,13 @@ export default function FitApp() {
         </button>
       </aside>
 
-      <section className="main-surface">
+      <section
+        className="main-surface"
+        onTouchStart={(event) => {
+          if (event.touches.length === 1) swipeStart.current = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+        }}
+        onTouchEnd={handleSwipeEnd}
+      >
         <header className="topbar">
           <div>
             <p className="eyebrow">
@@ -433,15 +497,6 @@ export default function FitApp() {
             </h1>
           </div>
           <div className="top-actions">
-            <label className="date-pill">
-              <CalendarDays />
-              <input
-                aria-label="Data selecionada"
-                type="date"
-                value={selectedDate}
-                onChange={(event) => setSelectedDate(event.target.value)}
-              />
-            </label>
             <span
               className={`sync-dot ${sync}`}
               title={
@@ -495,7 +550,7 @@ export default function FitApp() {
           <WorkoutPage state={state} setState={setState} date={selectedDate} onGoJudo={() => setPage('judo')} />
         )}
         {page === 'judo' && (
-          <JudoPage state={state} setState={setState} date={selectedDate} />
+          <JudoPage state={state} setState={setState} date={selectedDate} onBack={() => setPage('workout')} />
         )}
         {page === 'calendar' && (
           <CalendarPage
@@ -518,10 +573,10 @@ export default function FitApp() {
       </section>
 
       <nav className="mobile-nav" aria-label="Navegação móvel">
-        {navItems.slice(0, 2).map(({ id, label, icon: Icon }) => (
+        {mobileNavItems.map(({ id, label, icon: Icon }, index) => (
           <button
             key={id}
-            className={page === id ? 'active' : ''}
+            className={`${page === id ? 'active' : ''} ${index === 3 ? 'after-add' : ''}`}
             onClick={() => setPage(id)}
           >
             <Icon />
@@ -535,18 +590,6 @@ export default function FitApp() {
         >
           <Plus />
         </button>
-        {navItems
-          .filter((item) => item.id === 'workout' || item.id === 'progress')
-          .map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              className={page === id ? 'active' : ''}
-              onClick={() => setPage(id)}
-            >
-              <Icon />
-              <span>{label}</span>
-            </button>
-          ))}
       </nav>
 
       {mealOpen && (
@@ -789,7 +832,7 @@ function TodayPage({
   const selectedDay = new Date(`${date}T12:00:00`).getDay();
   const isToday = date === localDateKey();
   const activePlan = state.workoutPlans
-    .filter((plan) => plan.days?.includes(selectedDay))
+    .filter((plan) => !plan.days?.length || plan.days.includes(selectedDay))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'))[0];
   const maintenance = tdee(state.profile, state.activities);
   const deficit = calorieDeficit(maintenance, state.goals.calorieTarget);
@@ -797,6 +840,7 @@ function TodayPage({
   const health = state.healthSnapshots.find((entry) => entry.date === date);
   const [pastFastStart, setPastFastStart] = useState('20:00');
   const [pastFastEnd, setPastFastEnd] = useState('12:00');
+  const [waterMl, setWaterMl] = useState(250);
   const macroPie = [
     { name: 'Proteína', value: Math.round(consumed.protein * 4), fill: '#168fbd' },
     { name: 'Hidratos', value: Math.round(consumed.carbs * 4), fill: '#ef6f4c' },
@@ -968,16 +1012,21 @@ function TodayPage({
               </span>
             </div>
             <Progress value={(water / state.goals.waterLiters) * 100} />
-            <div className="stepper">
+            <div className="water-custom">
+              <Field label="Quantidade (ml)">
+                <NumberInput value={waterMl} min={50} max={2000} step="50" onChange={setWaterMl} />
+              </Field>
+              <div className="stepper">
               <Button
                 variant="outline"
                 size="icon"
-                aria-label="Retirar 250 ml"
-                onClick={() => onWater(-0.25)}
+                aria-label={`Retirar ${waterMl} ml`}
+                onClick={() => onWater(-waterMl / 1000)}
               >
                 <Minus />
               </Button>
-              <Button onClick={() => onWater(0.25)}>+ 250 ml</Button>
+              <Button onClick={() => onWater(waterMl / 1000)}>+ {waterMl} ml</Button>
+              </div>
             </div>
           </div>
           <div>
@@ -1111,7 +1160,7 @@ function MealsPage({
               <EmptyState
                 icon={Utensils}
                 title="O diário está vazio"
-                text="Usa a TACO ou informa os valores do rótulo para começar."
+                text="Usa a tabela portuguesa PortFIR ou informa os valores do rótulo para começar."
                 action="Adicionar refeição"
                 onClick={onAdd}
               />
@@ -1121,8 +1170,8 @@ function MealsPage({
       </div>
       <p className="source-note">
         Referência nutricional:{' '}
-        <a href={TACO_URL} target="_blank" rel="noreferrer">
-          TACO 4.ª edição, NEPA/UNICAMP
+        <a href={PORTFIR_URL} target="_blank" rel="noreferrer">
+          PortFIR/INSA — TCA v7.1 (2026)
         </a>
         . Valores por 100 g e arredondados.
       </p>
@@ -1140,8 +1189,8 @@ function MealDialog({
   onSave: (meal: Meal) => void;
 }) {
   const [type, setType] = useState('Almoço');
-  const [mode, setMode] = useState<'TACO' | 'Rótulo'>('TACO');
-  const [foodId, setFoodId] = useState(tacoFoods[0].id);
+  const [mode, setMode] = useState<'PortFIR' | 'Rótulo'>('PortFIR');
+  const [foodId, setFoodId] = useState(portfirFoods[0].id);
   const [foodQuery, setFoodQuery] = useState('');
   const [foodSearchOpen, setFoodSearchOpen] = useState(false);
   const [grams, setGrams] = useState(100);
@@ -1158,10 +1207,10 @@ function MealDialog({
   });
   const [ingredients, setIngredients] = useState<IngredientEntry[]>([]);
   const total = roundNutrients(sumNutrients(ingredients));
-  const selectedFood = tacoFoods.find((food) => food.id === foodId);
+  const selectedFood = portfirFoods.find((food) => food.id === foodId);
   const foodMatches = useMemo(() => {
-    if (!foodQuery.trim()) return tacoFoods.slice(0, 8);
-    return tacoFoods
+    if (!foodQuery.trim()) return portfirFoods.slice(0, 8);
+    return portfirFoods
       .map((food) => ({ food, score: foodMatchScore(foodQuery, food.name) }))
       .filter(({ score }) => score > 0)
       .sort(
@@ -1171,11 +1220,15 @@ function MealDialog({
       .slice(0, 8)
       .map(({ food }) => food);
   }, [foodQuery]);
+  const resolvedFood = foodQuery.trim()
+    ? normalizeText(selectedFood?.name ?? '') === normalizeText(foodQuery)
+      ? selectedFood
+      : foodMatches[0]
+    : selectedFood;
 
   function addIngredient() {
-    if (mode === 'TACO') {
-      const food =
-        tacoFoods.find((item) => item.id === foodId) ?? foodMatches[0];
+    if (mode === 'PortFIR') {
+      const food = resolvedFood;
       if (!food) return;
       const factor = grams / 100;
       setIngredients([
@@ -1184,7 +1237,7 @@ function MealDialog({
           id: uid(),
           name: food.name,
           grams,
-          source: 'TACO',
+          source: 'PortFIR',
           ...roundNutrients({
             calories: food.calories * factor,
             protein: food.protein * factor,
@@ -1247,11 +1300,11 @@ function MealDialog({
             <Field label="Fonte">
               <div className="segmented">
                 <button
-                  className={mode === 'TACO' ? 'selected' : ''}
-                  onClick={() => setMode('TACO')}
+                  className={mode === 'PortFIR' ? 'selected' : ''}
+                  onClick={() => setMode('PortFIR')}
                   type="button"
                 >
-                  Tabela TACO
+                  PortFIR
                 </button>
                 <button
                   className={mode === 'Rótulo' ? 'selected' : ''}
@@ -1263,8 +1316,8 @@ function MealDialog({
               </div>
             </Field>
           </div>
-          {mode === 'TACO' ? (
-            <div className="form-grid ingredient-input">
+          {mode === 'PortFIR' ? (
+            <div className="ingredient-input">
               <Field label="Pesquisar alimento">
                 <div className="food-search">
                   <Input
@@ -1301,9 +1354,9 @@ function MealDialog({
                   )}
                 </div>
                 <small className="field-hint">
-                  {selectedFood
-                    ? `Selecionado: ${selectedFood.name}`
-                    : 'Escreve parte do nome para pesquisar nos 597 alimentos da TACO.'}
+                  {resolvedFood
+                    ? `Correspondência: ${resolvedFood.name}`
+                    : `Escreve parte do nome para pesquisar nos ${portfirFoods.length.toLocaleString('pt-PT')} alimentos portugueses.`}
                 </small>
               </Field>
               <Field label="Peso (g)">
@@ -1456,10 +1509,11 @@ function WorkoutPage({
   const [elapsed, setElapsed] = useState(0);
   const [completedSets, setCompletedSets] = useState<string[]>([]);
   const [rest, setRest] = useState(0);
+  const [demoExercise, setDemoExercise] = useState<WorkoutExercise | null>(null);
   const [setValues, setSetValues] = useState<Record<string, { load: number | ''; reps: number | '' }>>({});
   const selectedDay = new Date(`${date}T12:00:00`).getDay();
   const duePlans = state.workoutPlans
-    .filter((plan) => plan.days?.includes(selectedDay))
+    .filter((plan) => !plan.days?.length || plan.days.includes(selectedDay))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'));
 
   useEffect(() => {
@@ -1550,17 +1604,13 @@ function WorkoutPage({
                 <span>
                   {exercise.sets} × {exercise.reps}
                 </span>
+                {exercise.gifUrl && (
+                  <Button type="button" variant="outline" size="sm" className="show-demo" onClick={() => setDemoExercise(exercise)}>
+                    <CirclePlay /> Ver execução
+                  </Button>
+                )}
               </CardHeader>
               <CardContent>
-                {exercise.gifUrl && (
-                  <div className="exercise-gif">
-                    <img
-                      src={exercise.gifUrl}
-                      alt={`Demonstração de ${exercise.name}`}
-                      loading="lazy"
-                    />
-                  </div>
-                )}
                 <div className="set-table">
                   <div>
                     <span>Série</span>
@@ -1628,6 +1678,7 @@ function WorkoutPage({
         <Button size="lg" className="finish-workout" onClick={finishWorkout}>
           <Check /> Terminar treino
         </Button>
+        {demoExercise && <ExerciseDemoDialog exercise={demoExercise} onClose={() => setDemoExercise(null)} />}
       </div>
     );
 
@@ -1712,7 +1763,9 @@ function PlanCard({
   onStart: () => void;
   onDelete?: () => void;
 }) {
+  const [demoExercise, setDemoExercise] = useState<WorkoutExercise | null>(null);
   return (
+    <>
     <Card className="panel plan-card">
       <CardHeader className="panel-heading">
         <div>
@@ -1734,12 +1787,8 @@ function PlanCard({
       <CardContent>
         <div className="plan-list">
           {plan.exercises.map((exercise, index) => (
-            <div key={exercise.id}>
-              {exercise.gifUrl ? (
-                <img className="plan-exercise-gif" src={exercise.gifUrl} alt={`Demonstração de ${exercise.name}`} loading="lazy" />
-              ) : (
-                <span>{String(index + 1).padStart(2, '0')}</span>
-              )}
+            <button type="button" key={exercise.id} onClick={() => setDemoExercise(exercise)}>
+              <span>{String(index + 1).padStart(2, '0')}</span>
               <div>
                 <strong>{exercise.name}</strong>
                 <small>
@@ -1749,7 +1798,8 @@ function PlanCard({
               <b>
                 {exercise.sets} × {exercise.reps}
               </b>
-            </div>
+              <CirclePlay className="plan-play" />
+            </button>
           ))}
         </div>
         <Button size="lg" className="wide-button" onClick={onStart}>
@@ -1757,6 +1807,24 @@ function PlanCard({
         </Button>
       </CardContent>
     </Card>
+    {demoExercise && <ExerciseDemoDialog exercise={demoExercise} onClose={() => setDemoExercise(null)} />}
+    </>
+  );
+}
+
+function ExerciseDemoDialog({ exercise, onClose }: { exercise: WorkoutExercise; onClose: () => void }) {
+  return (
+    <div className="dialog-backdrop exercise-demo-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="exercise-demo-dialog" role="dialog" aria-modal="true" aria-labelledby="exercise-demo-title">
+        <header>
+          <div><p className="eyebrow">EXECUÇÃO</p><h2 id="exercise-demo-title">{exercise.name}</h2></div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Fechar demonstração" onClick={onClose}><X /></Button>
+        </header>
+        {exercise.gifUrl ? <img src={exercise.gifUrl} alt={`Demonstração de ${exercise.name}`} /> : <div className="demo-unavailable"><Dumbbell /><p>Demonstração indisponível para este exercício.</p></div>}
+        <div className="exercise-demo-stats"><MiniStat label="Séries" value={String(exercise.sets)} /><MiniStat label="Repetições" value={exercise.reps} /><MiniStat label="Descanso" value={`${exercise.restSeconds} s`} /></div>
+        <p>{exercise.target} · {exercise.equipment}</p>
+      </section>
+    </div>
   );
 }
 
@@ -1777,6 +1845,13 @@ function TrainingTimer({
   const [remaining, setRemaining] = useState(120);
   const [freeElapsed, setFreeElapsed] = useState(0);
   const [running, setRunning] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const nativeStarted = useRef(false);
+
+  async function callNative(action: () => Promise<void>) {
+    if (!Capacitor.isNativePlatform()) return;
+    try { await action(); } catch { /* O cronómetro web continua funcional. */ }
+  }
 
   function resetTimer() {
     setRunning(false);
@@ -1784,6 +1859,27 @@ function TrainingTimer({
     setRound(1);
     setRemaining(workSeconds);
     setFreeElapsed(0);
+    nativeStarted.current = false;
+    void callNative(() => NativeWorkoutTimer.stop());
+  }
+
+  async function toggleRunning() {
+    if (running) {
+      setRunning(false);
+      await callNative(() => NativeWorkoutTimer.pause());
+      return;
+    }
+    setRunning(true);
+    if (nativeStarted.current) await callNative(() => NativeWorkoutTimer.resume());
+    else {
+      nativeStarted.current = true;
+      await callNative(() => NativeWorkoutTimer.start({ name, mode, workSeconds, restSeconds, rounds }));
+    }
+  }
+
+  function skipPhase() {
+    nextPhase();
+    void callNative(() => NativeWorkoutTimer.skip());
   }
 
   const nextPhase = useCallback(() => {
@@ -1792,6 +1888,8 @@ function TrainingTimer({
         setPhase('done');
         setRemaining(0);
         setRunning(false);
+        nativeStarted.current = false;
+        void callNative(() => NativeWorkoutTimer.stop());
       } else if (restSeconds > 0) {
         setPhase('rest');
         setRemaining(restSeconds);
@@ -1851,18 +1949,19 @@ function TrainingTimer({
 
   return (
     <Card className="panel interval-card">
-      <CardHeader className="panel-heading">
+      <CardHeader className="panel-heading timer-collapsed-head">
         <div>
           <p className="eyebrow">CRONÓMETRO</p>
           <CardTitle>Timer de treino</CardTitle>
-          <CardDescription>Intervalos personalizados ou treino livre.</CardDescription>
+          <CardDescription>{expanded ? 'Intervalos personalizados ou treino livre.' : 'Toca para abrir; no APK continua na barra de notificações.'}</CardDescription>
         </div>
-        <div className="segmented compact">
+        <Button type="button" variant="ghost" size="icon" aria-label={expanded ? 'Fechar cronómetro' : 'Abrir cronómetro'} onClick={() => setExpanded((value) => !value)}><ChevronDown className={expanded ? 'rotated' : ''} /></Button>
+      </CardHeader>
+      {expanded && <CardContent>
+        <div className="segmented compact timer-mode">
           <button type="button" className={mode === 'interval' ? 'selected' : ''} onClick={() => { setMode('interval'); resetTimer(); }}>Intervalado</button>
           <button type="button" className={mode === 'free' ? 'selected' : ''} onClick={() => { setMode('free'); resetTimer(); }}>Livre</button>
         </div>
-      </CardHeader>
-      <CardContent>
         {mode === 'interval' ? (
           <>
             <div className={`timer-stage ${phase}`}>
@@ -1871,10 +1970,10 @@ function TrainingTimer({
               <small>Ronda {round} de {rounds}</small>
             </div>
             <div className="timer-actions">
-              <Button type="button" size="lg" onClick={() => { if (phase === 'done') resetTimer(); setRunning((value) => !value); }}>
+              <Button type="button" size="lg" onClick={() => { if (phase === 'done') resetTimer(); else void toggleRunning(); }}>
                 {running ? <CirclePause /> : <CirclePlay />}{running ? 'Pausar' : phase === 'done' ? 'Recomeçar' : 'Iniciar'}
               </Button>
-              <Button type="button" variant="outline" size="lg" onClick={nextPhase}>Saltar fase</Button>
+              <Button type="button" variant="outline" size="lg" onClick={skipPhase}>Saltar fase</Button>
               <Button type="button" variant="ghost" size="icon" aria-label="Repor timer" onClick={resetTimer}><RotateCcw /></Button>
             </div>
             <div className="interval-builder">
@@ -1899,12 +1998,12 @@ function TrainingTimer({
           <>
             <div className="timer-stage free"><span>TREINO LIVRE</span><strong>{formatDuration(freeElapsed)}</strong><small>Conta o tempo sem limite</small></div>
             <div className="timer-actions">
-              <Button type="button" size="lg" onClick={() => setRunning((value) => !value)}>{running ? <CirclePause /> : <CirclePlay />}{running ? 'Pausar' : 'Iniciar'}</Button>
+              <Button type="button" size="lg" onClick={() => void toggleRunning()}>{running ? <CirclePause /> : <CirclePlay />}{running ? 'Pausar' : 'Iniciar'}</Button>
               <Button type="button" variant="ghost" size="icon" aria-label="Repor cronómetro" onClick={resetTimer}><RotateCcw /></Button>
             </div>
           </>
         )}
-      </CardContent>
+      </CardContent>}
     </Card>
   );
 }
@@ -1924,25 +2023,61 @@ function JudoPage({
   state,
   setState,
   date,
+  onBack,
 }: {
   state: AppState;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
   date: string;
+  onBack: () => void;
 }) {
   const [category, setCategory] = useState<JudoCategory | 'Todas'>('Todas');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
+  const [videoTechniqueId, setVideoTechniqueId] = useState<string | null>(null);
+  const [customVideo, setCustomVideo] = useState<{ title: string; videoId: string } | null>(null);
   const [duration, setDuration] = useState(90);
   const [uchikomi, setUchikomi] = useState(0);
   const [randoriRounds, setRandoriRounds] = useState(0);
   const [randoriMinutes, setRandoriMinutes] = useState(4);
   const [notes, setNotes] = useState('');
+  const [tokuiCandidate, setTokuiCandidate] = useState(judoTechniques[0].id);
+  const [learningTechnique, setLearningTechnique] = useState(judoTechniques[0].id);
+  const [learningMedia, setLearningMedia] = useState('');
+  const [learningNotes, setLearningNotes] = useState('');
   const filteredTechniques = judoTechniques.filter((item) =>
     (category === 'Todas' || item.category === category) &&
     normalizeText(`${item.name} ${item.japanese}`).includes(normalizeText(query)),
   );
   const totalRandori = state.judoPractices.reduce((sum, item) => sum + item.randoriRounds * item.randoriMinutes, 0);
   const uniqueTechniques = new Set(state.judoPractices.flatMap((item) => item.techniqueIds)).size;
+  const techniqueCounts = state.judoPractices.flatMap((item) => item.techniqueIds).reduce<Record<string, number>>((counts, id) => ({ ...counts, [id]: (counts[id] ?? 0) + 1 }), {});
+  const mostUsed = Object.entries(techniqueCounts).sort((a, b) => b[1] - a[1])[0];
+  const mostUsedTechnique = mostUsed ? judoTechniques.find((item) => item.id === mostUsed[0]) : undefined;
+  const selectedVideo = judoTechniques.find((item) => item.id === videoTechniqueId);
+  const radarData = [
+    { subject: 'Técnica', value: state.judoProfile.scores.technique },
+    { subject: 'Físico', value: state.judoProfile.scores.physical },
+    { subject: 'Mental', value: state.judoProfile.scores.mental },
+    { subject: 'Condição', value: state.judoProfile.scores.conditioning },
+    { subject: 'Conhecimento', value: state.judoProfile.scores.knowledge },
+    { subject: 'Competição', value: state.judoProfile.scores.matchPrep },
+  ];
+  const weakest = [...radarData].sort((a, b) => a.value - b.value)[0];
+  const tachiCount = Object.entries(techniqueCounts).reduce((sum, [id, count]) => sum + (judoTechniques.find((item) => item.id === id)?.category.endsWith('waza') && !['Osaekomi-waza', 'Shime-waza', 'Kansetsu-waza'].includes(judoTechniques.find((item) => item.id === id)?.category ?? '') ? count : 0), 0);
+  const neCount = Object.entries(techniqueCounts).reduce((sum, [id, count]) => sum + (['Osaekomi-waza', 'Shime-waza', 'Kansetsu-waza'].includes(judoTechniques.find((item) => item.id === id)?.category ?? '') ? count : 0), 0);
+
+  function patchJudoProfile(patch: Partial<AppState['judoProfile']>) {
+    setState((current) => ({ ...current, judoProfile: { ...current.judoProfile, ...patch } }));
+  }
+
+  function addLearningGoal() {
+    const techniqueItem = judoTechniques.find((item) => item.id === learningTechnique)!;
+    patchJudoProfile({
+      learningGoals: [...state.judoProfile.learningGoals, { id: uid(), techniqueId: techniqueItem.id, name: techniqueItem.name, mediaUrl: learningMedia.trim() || undefined, notes: learningNotes.trim(), progress: 0 }],
+    });
+    setLearningMedia('');
+    setLearningNotes('');
+  }
 
   function savePractice() {
     setState((current) => ({
@@ -1963,17 +2098,57 @@ function JudoPage({
   return (
     <div className="content-page page-enter judo-page">
       <section className="page-intro">
-        <div><p className="eyebrow">DOJO PESSOAL</p><h2>Judô, técnica por técnica</h2><p>Regista o treino, revê o teu repertório e abre demonstrações oficiais.</p></div>
+        <div><Button type="button" variant="ghost" className="back-to-workout" onClick={onBack}><ArrowLeft /> Voltar aos treinos</Button><p className="eyebrow">DOJO PESSOAL</p><h2>Judô, técnica por técnica</h2><p>Regista, mede e transforma cada treino no próximo foco.</p></div>
         <div className="judo-source-actions">
           <a className="button-link outline" href={KODOKAN_DEFINITIONS_URL} target="_blank" rel="noreferrer"><BookOpen /> Definições Kodokan</a>
           <a className="button-link" href={KODOKAN_TECHNIQUES_URL} target="_blank" rel="noreferrer"><ExternalLink /> 100 técnicas oficiais</a>
         </div>
       </section>
-      <section className="judo-summary">
-        <MiniStat label="Treinos registados" value={String(state.judoPractices.length)} />
-        <MiniStat label="Técnicas praticadas" value={String(uniqueTechniques)} />
-        <MiniStat label="Randori acumulado" value={`${totalRandori} min`} />
+      <section className="judo-command-grid">
+        <Card className="judo-rank-card">
+          <CardContent>
+            <div className="belt-orbit"><span>{state.judoProfile.belt.slice(0, 1)}</span></div>
+            <div><p className="eyebrow">GRADUAÇÃO</p><h3>Faixa {state.judoProfile.belt}</h3><select aria-label="Faixa de judô" value={state.judoProfile.belt} onChange={(event) => patchJudoProfile({ belt: event.target.value })}>{['Branca','Amarela','Laranja','Verde','Azul','Castanha','Preta'].map((belt) => <option key={belt}>{belt}</option>)}</select></div>
+          </CardContent>
+        </Card>
+        <Card className="judo-focus-card">
+          <CardContent><p className="eyebrow">PRÓXIMO FOCO</p><h3>Melhorar {weakest.subject.toLowerCase()}</h3><p>É a dimensão com menor pontuação ({weakest.value}/100). Define um exercício concreto para a próxima sessão e revê ao fim da semana.</p></CardContent>
+        </Card>
+        <Card className="judo-most-card">
+          <CardContent><p className="eyebrow">TÉCNICA MAIS USADA</p><h3>{mostUsedTechnique?.name ?? 'Ainda sem dados'}</h3><p>{mostUsed ? `${mostUsed[1]} registos nos teus treinos.` : 'Regista técnicas no diário para descobrir o teu padrão.'}</p></CardContent>
+        </Card>
       </section>
+      <section className="judo-summary">
+        <MiniStat label="Treinos" value={String(state.judoPractices.length)} />
+        <MiniStat label="Técnicas" value={String(uniqueTechniques)} />
+        <MiniStat label="Randori" value={`${totalRandori} min`} />
+        <MiniStat label="Tachi / Ne-waza" value={`${tachiCount} / ${neCount}`} />
+      </section>
+      <div className="judo-dashboard-grid">
+        <Card className="panel judo-radar-card">
+          <CardHeader><CardTitle>Radar de evolução</CardTitle><CardDescription>Avaliação pessoal, editável a qualquer momento.</CardDescription></CardHeader>
+          <CardContent>
+            <ChartContainer className="judo-radar-chart" config={{ value: { label: 'Pontuação', color: '#1f9dcc' } }}>
+              <RadarChart data={radarData} outerRadius="68%"><PolarGrid /><PolarAngleAxis dataKey="subject" tick={{ fontSize: 11 }} /><PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} /><Radar dataKey="value" stroke="#19a8e0" fill="#168fbd" fillOpacity={0.42} strokeWidth={3} /></RadarChart>
+            </ChartContainer>
+            <div className="judo-score-editor">{Object.entries(state.judoProfile.scores).map(([key, value]) => <Field key={key} label={{ technique: 'Técnica', physical: 'Físico', mental: 'Mental', conditioning: 'Condição', knowledge: 'Conhecimento', matchPrep: 'Competição' }[key]}><NumberInput value={value} min={0} max={100} step="5" onChange={(score) => patchJudoProfile({ scores: { ...state.judoProfile.scores, [key]: score } })} /></Field>)}</div>
+          </CardContent>
+        </Card>
+        <Card className="panel tokui-card">
+          <CardHeader><CardTitle>Tokui-waza</CardTitle><CardDescription>As técnicas que formam o centro do teu jogo.</CardDescription></CardHeader>
+          <CardContent>
+            <div className="inline-builder"><select value={tokuiCandidate} onChange={(event) => setTokuiCandidate(event.target.value)}>{judoTechniques.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><Button type="button" onClick={() => { if (!state.judoProfile.tokuiWazaIds.includes(tokuiCandidate)) patchJudoProfile({ tokuiWazaIds: [...state.judoProfile.tokuiWazaIds, tokuiCandidate] }); }}><Plus /> Adicionar</Button></div>
+            <div className="tokui-list">{state.judoProfile.tokuiWazaIds.length ? state.judoProfile.tokuiWazaIds.map((id) => { const item = judoTechniques.find((techniqueItem) => techniqueItem.id === id); return item ? <button type="button" key={id} onClick={() => patchJudoProfile({ tokuiWazaIds: state.judoProfile.tokuiWazaIds.filter((value) => value !== id) })}><strong>{item.name}</strong><small>{judoCategoryLabels[item.category]}</small><X /></button> : null; }) : <p className="muted-copy">Ainda não escolheste o teu tokui-waza.</p>}</div>
+          </CardContent>
+        </Card>
+      </div>
+      <Card className="panel learning-card">
+        <CardHeader><CardTitle>Roadmap — técnicas que quero aprender</CardTitle><CardDescription>Guarda uma referência do YouTube, Shorts ou Reel e acompanha o progresso.</CardDescription></CardHeader>
+        <CardContent>
+          <div className="learning-builder"><Field label="Técnica"><select value={learningTechnique} onChange={(event) => setLearningTechnique(event.target.value)}>{judoTechniques.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="Link de vídeo/Reel (opcional)"><Input value={learningMedia} onChange={(event) => setLearningMedia(event.target.value)} placeholder="https://youtube.com/... ou instagram.com/reel/..." /></Field><Field label="O que quero melhorar"><Input value={learningNotes} onChange={(event) => setLearningNotes(event.target.value)} placeholder="Pegada, entrada, combinação…" /></Field><Button type="button" onClick={addLearningGoal}><Plus /> Adicionar ao roadmap</Button></div>
+          <div className="learning-list">{state.judoProfile.learningGoals.map((goal) => { const youtubeId = goal.mediaUrl ? youtubeIdFromUrl(goal.mediaUrl) : undefined; return <article key={goal.id}><div><strong>{goal.name}</strong><p>{goal.notes || 'Sem notas.'}</p>{goal.mediaUrl && (youtubeId ? <button type="button" className="media-chip" onClick={() => setCustomVideo({ title: goal.name, videoId: youtubeId })}><CirclePlay /> Abrir vídeo</button> : <a href={goal.mediaUrl} target="_blank" rel="noreferrer"><ExternalLink /> Abrir referência</a>)}</div><Field label="Progresso %"><NumberInput value={goal.progress} min={0} max={100} step="5" onChange={(progress) => patchJudoProfile({ learningGoals: state.judoProfile.learningGoals.map((item) => item.id === goal.id ? { ...item, progress } : item) })} /></Field><Button type="button" variant="ghost" size="icon" aria-label={`Apagar ${goal.name}`} onClick={() => patchJudoProfile({ learningGoals: state.judoProfile.learningGoals.filter((item) => item.id !== goal.id) })}><Trash2 /></Button></article>; })}</div>
+        </CardContent>
+      </Card>
       <div className="judo-layout">
         <Card className="panel judo-log-card">
           <CardHeader><CardTitle>Registar treino de {new Date(`${date}T12:00:00`).toLocaleDateString('pt-PT')}</CardTitle><CardDescription>Um diário curto para orientar a próxima sessão.</CardDescription></CardHeader>
@@ -1995,12 +2170,13 @@ function JudoPage({
         </Card>
       </div>
       <Card className="panel technique-library">
-        <CardHeader><div><p className="eyebrow">KODOKAN + IJF</p><CardTitle>Biblioteca técnica</CardTitle><CardDescription>Classificação oficial e ligação para vídeo/3D e exemplos de competição da IJF.</CardDescription></div><Input aria-label="Procurar técnica" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Procurar uchi-mata…" /></CardHeader>
+        <CardHeader><div><p className="eyebrow">KODOKAN</p><CardTitle>Biblioteca técnica com vídeo</CardTitle><CardDescription>Abre apenas a demonstração escolhida, diretamente dentro da Fitide.</CardDescription></div><Input aria-label="Procurar técnica" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Procurar uchi-mata…" /></CardHeader>
         <CardContent>
           <div className="technique-filters">{(Object.keys(judoCategoryLabels) as Array<JudoCategory | 'Todas'>).map((item) => <button type="button" key={item} className={category === item ? 'selected' : ''} onClick={() => setCategory(item)}>{judoCategoryLabels[item]}</button>)}</div>
-          <div className="technique-grid">{filteredTechniques.map((item) => <article key={item.id} className={selected.includes(item.id) ? 'selected' : ''}><button type="button" className="technique-select" onClick={() => setSelected((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}><span>{item.japanese}</span><strong>{item.name}</strong><small>{judoCategoryLabels[item.category]}</small></button><a href={ijfTechniqueUrl(item.id)} target="_blank" rel="noreferrer">Vídeo oficial IJF <ExternalLink /></a></article>)}</div>
+          <div className="technique-grid">{filteredTechniques.map((item) => <article key={item.id} className={selected.includes(item.id) ? 'selected' : ''}><button type="button" className="technique-select" onClick={() => setSelected((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}><span>{item.japanese}</span><strong>{item.name}</strong><small>{judoCategoryLabels[item.category]}</small></button><button type="button" className="technique-video" onClick={() => setVideoTechniqueId(item.id)}><CirclePlay /> Ver vídeo Kodokan</button></article>)}</div>
         </CardContent>
       </Card>
+      {(selectedVideo || customVideo) && <div className="dialog-backdrop video-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) { setVideoTechniqueId(null); setCustomVideo(null); } }}><section className="judo-video-dialog" role="dialog" aria-modal="true" aria-labelledby="judo-video-title"><header><div><p className="eyebrow">VÍDEO NO FITIDE</p><h2 id="judo-video-title">{selectedVideo?.name ?? customVideo?.title}</h2></div><Button type="button" variant="ghost" size="icon" aria-label="Fechar vídeo" onClick={() => { setVideoTechniqueId(null); setCustomVideo(null); }}><X /></Button></header><div className="video-frame"><iframe src={`https://www.youtube-nocookie.com/embed/${selectedVideo?.videoId ?? customVideo?.videoId}?rel=0`} title={`Demonstração de ${selectedVideo?.name ?? customVideo?.title}`} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /></div>{selectedVideo && <p>{selectedVideo.japanese} · {judoCategoryLabels[selectedVideo.category]}</p>}</section></div>}
     </div>
   );
 }
@@ -2038,8 +2214,13 @@ function CalendarPage({
     (entry) => entry.date === selectedDate,
   );
   const fast = state.fasts.find(
-    (entry) => localDateKey(new Date(entry.start)) === selectedDate,
+    (entry) => localDateKey(new Date(entry.end)) === selectedDate,
   );
+  const todayKey = localDateKey();
+  const fastingMetForDate = (key: string) => state.fasts.some((entry) => {
+    const durationHours = (new Date(entry.end).getTime() - new Date(entry.start).getTime()) / 3_600_000;
+    return localDateKey(new Date(entry.end)) === key && durationHours >= state.goals.fastingHours;
+  });
   return (
     <div className="content-page page-enter">
       <section className="page-intro">
@@ -2080,6 +2261,7 @@ function CalendarPage({
             </Button>
           </CardHeader>
           <CardContent>
+            <div className="calendar-legend"><span><i className="met" /> Meta de jejum</span><span><i className="today" /> Hoje</span><span><i className="missed" /> Meta não cumprida</span></div>
             <div className="calendar-grid">
               {dayNames.map((day, index) => (
                 <span className="calendar-week" key={`${day}-${index}`}>
@@ -2088,10 +2270,7 @@ function CalendarPage({
               ))}
               {days.map((day) => {
                 const key = localDateKey(day);
-                const hasData =
-                  state.meals.some((meal) => meal.date === key) ||
-                  state.water.some((entry) => entry.date === key) ||
-                  state.workoutSessions.some((entry) => entry.date === key);
+                const fastStatus = key === todayKey ? 'today' : key < todayKey ? (fastingMetForDate(key) ? 'met' : 'missed') : '';
                 return (
                   <button
                     key={key}
@@ -2099,7 +2278,7 @@ function CalendarPage({
                     onClick={() => setSelectedDate(key)}
                   >
                     <span>{day.getDate()}</span>
-                    {hasData && <i />}
+                    {fastStatus && <i className={fastStatus} />}
                   </button>
                 );
               })}
@@ -2557,7 +2736,7 @@ function HealthConnectPanel({
           {latest && <small>Última sincronização: {new Date(latest.syncedAt).toLocaleString('pt-PT')} · {latest.steps?.toLocaleString('pt-PT') ?? '—'} passos</small>}
           {message && <small className={status === 'error' ? 'health-error' : ''}>{message}</small>}
           <div className="health-actions">
-            <Button type="button" onClick={connectAndSync} disabled={!native || status === 'syncing'}>{status === 'syncing' ? <LoaderCircle className="spin" /> : <HeartPulse />}{native ? 'Ligar e sincronizar' : 'Disponível no APK 2.0'}</Button>
+            <Button type="button" onClick={connectAndSync} disabled={!native || status === 'syncing'}>{status === 'syncing' ? <LoaderCircle className="spin" /> : <HeartPulse />}{native ? 'Ligar e sincronizar' : 'Disponível no APK 2.1'}</Button>
             {native && <Button type="button" variant="outline" onClick={() => HealthFitness.openHealthConnect().catch(() => setMessage('Health Connect não está disponível neste dispositivo.'))}>Abrir Health Connect</Button>}
           </div>
         </div>
@@ -3063,11 +3242,11 @@ function SettingsPage({
                 <Apple />
               </div>
               <div>
-                <strong>Tabela TACO</strong>
+                <strong>Tabela portuguesa PortFIR</strong>
                 <p>
                   Composição por 100 g para alimentos sem rótulo nutricional.
                 </p>
-                <a href={TACO_URL} target="_blank" rel="noreferrer">
+                <a href={PORTFIR_URL} target="_blank" rel="noreferrer">
                   Consultar referência →
                 </a>
               </div>
