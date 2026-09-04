@@ -49,7 +49,7 @@ export interface IngredientEntry extends Nutrients {
   id: string;
   name: string;
   grams: number;
-  source: 'PortFIR' | 'TACO' | 'Rótulo';
+  source: 'Catálogo' | 'PortFIR' | 'TACO' | 'Rótulo';
 }
 
 export interface Meal {

@@ -95,7 +95,7 @@ import {
   KODOKAN_TECHNIQUES_URL,
   type JudoCategory,
 } from '@/lib/judo';
-import { portfirFoods, PORTFIR_URL } from '@/lib/portfir';
+import { foodCatalog, type FoodCatalogItem } from '@/lib/food-catalog';
 
 interface WorkoutTimerNativePlugin {
   start(options: { name: string; mode: 'interval' | 'free'; workSeconds: number; restSeconds: number; rounds: number }): Promise<void>;
@@ -202,28 +202,73 @@ function editDistance(a: string, b: string) {
   return row[b.length];
 }
 
-function foodMatchScore(query: string, name: string) {
-  const cleanQuery = normalizeText(query);
-  const cleanName = normalizeText(name);
+const foodSynonymGroups = [
+  ['abacaxi', 'ananas'],
+  ['abobrinha', 'courgette'],
+  ['aipim', 'macaxeira', 'mandioca'],
+  ['alho poro', 'alho frances'],
+  ['beringela', 'berinjela'],
+  ['carne moida', 'carne picada'],
+  ['creme de leite', 'natas'],
+  ['gelado', 'sorvete'],
+  ['leite desnatado', 'leite magro'],
+  ['leite semidesnatado', 'leite meio gordo'],
+  ['pao frances', 'pao de sal', 'cacetinho'],
+  ['pimentao', 'pimento'],
+  ['porco', 'suino'],
+  ['suco', 'sumo'],
+  ['vaca', 'boi', 'bovino'],
+];
+
+function foodQueryVariants(value: string) {
+  const clean = normalizeText(value);
+  const variants = new Set([clean]);
+  for (const group of foodSynonymGroups) {
+    for (const term of group) {
+      if (!clean.includes(term)) continue;
+      for (const alternative of group) variants.add(clean.replace(term, alternative));
+    }
+  }
+  return [...variants];
+}
+
+const foodStopWords = new Set(['a', 'as', 'com', 'da', 'das', 'de', 'do', 'dos', 'e', 'em']);
+
+function directFoodMatchScore(cleanQuery: string, cleanName: string) {
   if (!cleanQuery) return 0;
-  if (cleanName === cleanQuery) return 1000;
-  if (cleanName.startsWith(cleanQuery)) return 900 - cleanName.length;
-  if (cleanName.includes(cleanQuery))
-    return 800 - cleanName.indexOf(cleanQuery);
-  const nameTokens = cleanName.split(' ');
-  return cleanQuery.split(' ').reduce((score, token) => {
+  if (cleanName === cleanQuery) return 2400;
+  if (cleanName.startsWith(cleanQuery)) return 1900 - cleanName.length;
+  if (cleanName.includes(cleanQuery)) return 1600 - cleanName.indexOf(cleanQuery);
+  const queryTokens = cleanQuery.split(' ').filter((token) => token && !foodStopWords.has(token));
+  const nameTokens = cleanName.split(' ').filter((token) => token && !foodStopWords.has(token));
+  if (!queryTokens.length) return 0;
+  let score = 350;
+  for (const token of queryTokens) {
     const best = Math.max(
-      ...nameTokens.map((candidate) =>
-        candidate.startsWith(token)
-          ? 40
-          : editDistance(token, candidate) <=
-              Math.max(1, Math.floor(token.length / 3))
-            ? 20
-            : 0,
-      ),
+      0,
+      ...nameTokens.map((candidate) => {
+        if (candidate === token) return 150;
+        if (candidate.startsWith(token) || token.startsWith(candidate)) return 105;
+        if (candidate.includes(token) || token.includes(candidate)) return 80;
+        const tolerance = token.length >= 7 ? 2 : token.length >= 4 ? 1 : 0;
+        return tolerance && editDistance(token, candidate) <= tolerance ? 65 : 0;
+      }),
     );
-    return score + best;
-  }, 0);
+    if (!best) return 0;
+    score += best;
+  }
+  return score - Math.max(0, nameTokens.length - queryTokens.length) * 4;
+}
+
+function foodMatchScore(query: string, name: string) {
+  const cleanName = normalizeText(name);
+  return Math.max(...foodQueryVariants(query).map((variant) => directFoodMatchScore(variant, cleanName)));
+}
+
+function foodMatchLabel(query: string, food: FoodCatalogItem, score: number) {
+  if (normalizeText(query) === normalizeText(food.name)) return 'Correspondência exata';
+  if (score >= 1500) return 'Correspondência próxima';
+  return 'Alimento semelhante';
 }
 
 function formatLiters(value: number) {
@@ -246,6 +291,20 @@ function localDateKey(date = new Date()) {
 
 function uid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function useViewportLock(active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+    const previousOverflow = document.body.style.overflow;
+    const previousOverscroll = document.body.style.overscrollBehavior;
+    document.body.style.overflow = 'hidden';
+    document.body.style.overscrollBehavior = 'none';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscroll;
+    };
+  }, [active]);
 }
 
 function formatDuration(totalSeconds: number) {
@@ -1160,7 +1219,7 @@ function MealsPage({
               <EmptyState
                 icon={Utensils}
                 title="O diário está vazio"
-                text="Usa a tabela portuguesa PortFIR ou informa os valores do rótulo para começar."
+                text="Pesquisa no catálogo alimentar ou informa os valores do rótulo para começar."
                 action="Adicionar refeição"
                 onClick={onAdd}
               />
@@ -1168,13 +1227,6 @@ function MealsPage({
           </Card>
         )}
       </div>
-      <p className="source-note">
-        Referência nutricional:{' '}
-        <a href={PORTFIR_URL} target="_blank" rel="noreferrer">
-          PortFIR/INSA — TCA v7.1 (2026)
-        </a>
-        . Valores por 100 g e arredondados.
-      </p>
     </div>
   );
 }
@@ -1189,45 +1241,63 @@ function MealDialog({
   onSave: (meal: Meal) => void;
 }) {
   const [type, setType] = useState('Almoço');
-  const [mode, setMode] = useState<'PortFIR' | 'Rótulo'>('PortFIR');
-  const [foodId, setFoodId] = useState(portfirFoods[0].id);
+  const [mode, setMode] = useState<'Catálogo' | 'Rótulo'>('Catálogo');
+  const [foodId, setFoodId] = useState(foodCatalog[0].id);
   const [foodQuery, setFoodQuery] = useState('');
   const [foodSearchOpen, setFoodSearchOpen] = useState(false);
+  const foodSearchRef = useRef<HTMLDivElement>(null);
   const [grams, setGrams] = useState(100);
   const [manualName, setManualName] = useState('');
-  const [manual, setManual] = useState<Nutrients>({
-    calories: 0,
-    protein: 0,
-    carbs: 0,
-    fat: 0,
-    fiber: 0,
-    calcium: 0,
-    iron: 0,
-    vitaminC: 0,
+  const [manual, setManual] = useState<Record<keyof Nutrients, number | ''>>({
+    calories: '',
+    protein: '',
+    carbs: '',
+    fat: '',
+    fiber: '',
+    calcium: '',
+    iron: '',
+    vitaminC: '',
   });
   const [ingredients, setIngredients] = useState<IngredientEntry[]>([]);
   const total = roundNutrients(sumNutrients(ingredients));
-  const selectedFood = portfirFoods.find((food) => food.id === foodId);
+  const selectedFood = foodCatalog.find((food) => food.id === foodId);
   const foodMatches = useMemo(() => {
-    if (!foodQuery.trim()) return portfirFoods.slice(0, 8);
-    return portfirFoods
+    if (!foodQuery.trim()) return foodCatalog.slice(0, 8).map((food) => ({ food, score: 0 }));
+    return foodCatalog
       .map((food) => ({ food, score: foodMatchScore(foodQuery, food.name) }))
       .filter(({ score }) => score > 0)
       .sort(
         (a, b) =>
           b.score - a.score || a.food.name.localeCompare(b.food.name, 'pt'),
       )
-      .slice(0, 8)
-      .map(({ food }) => food);
+      .slice(0, 10);
   }, [foodQuery]);
   const resolvedFood = foodQuery.trim()
     ? normalizeText(selectedFood?.name ?? '') === normalizeText(foodQuery)
       ? selectedFood
-      : foodMatches[0]
+      : foodMatches[0]?.food
     : selectedFood;
+  const requiredManualKeys: Array<keyof Nutrients> = ['protein', 'carbs', 'fat', 'fiber'];
+  const manualComplete = requiredManualKeys.every((key) => manual[key] !== '');
+
+  useEffect(() => {
+    if (!foodSearchOpen) return;
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (!foodSearchRef.current?.contains(event.target as Node)) setFoodSearchOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFoodSearchOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePress);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePress);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [foodSearchOpen]);
 
   function addIngredient() {
-    if (mode === 'PortFIR') {
+    if (mode === 'Catálogo') {
       const food = resolvedFood;
       if (!food) return;
       const factor = grams / 100;
@@ -1237,7 +1307,7 @@ function MealDialog({
           id: uid(),
           name: food.name,
           grams,
-          source: 'PortFIR',
+          source: 'Catálogo',
           ...roundNutrients({
             calories: food.calories * factor,
             protein: food.protein * factor,
@@ -1251,7 +1321,20 @@ function MealDialog({
         },
       ]);
       setFoodQuery('');
-    } else if (manualName.trim()) {
+    } else if (manualName.trim() && manualComplete) {
+      const per100 = {
+        calories: manual.calories === ''
+          ? Number(manual.protein) * 4 + Number(manual.carbs) * 4 + Number(manual.fat) * 9
+          : Number(manual.calories),
+        protein: Number(manual.protein),
+        carbs: Number(manual.carbs),
+        fat: Number(manual.fat),
+        fiber: Number(manual.fiber),
+        calcium: Number(manual.calcium || 0),
+        iron: Number(manual.iron || 0),
+        vitaminC: Number(manual.vitaminC || 0),
+      };
+      const factor = grams / 100;
       setIngredients([
         ...ingredients,
         {
@@ -1259,7 +1342,16 @@ function MealDialog({
           name: manualName.trim(),
           grams,
           source: 'Rótulo',
-          ...manual,
+          ...roundNutrients({
+            calories: per100.calories * factor,
+            protein: per100.protein * factor,
+            carbs: per100.carbs * factor,
+            fat: per100.fat * factor,
+            fiber: per100.fiber * factor,
+            calcium: per100.calcium * factor,
+            iron: per100.iron * factor,
+            vitaminC: per100.vitaminC * factor,
+          }),
         },
       ]);
       setManualName('');
@@ -1297,18 +1389,21 @@ function MealDialog({
                 )}
               </select>
             </Field>
-            <Field label="Fonte">
+            <Field label="Modo">
               <div className="segmented">
                 <button
-                  className={mode === 'PortFIR' ? 'selected' : ''}
-                  onClick={() => setMode('PortFIR')}
+                  className={mode === 'Catálogo' ? 'selected' : ''}
+                  onClick={() => setMode('Catálogo')}
                   type="button"
                 >
-                  PortFIR
+                  Catálogo
                 </button>
                 <button
                   className={mode === 'Rótulo' ? 'selected' : ''}
-                  onClick={() => setMode('Rótulo')}
+                  onClick={() => {
+                    setMode('Rótulo');
+                    setFoodSearchOpen(false);
+                  }}
                   type="button"
                 >
                   Rótulo
@@ -1316,10 +1411,10 @@ function MealDialog({
               </div>
             </Field>
           </div>
-          {mode === 'PortFIR' ? (
+          {mode === 'Catálogo' ? (
             <div className="ingredient-input">
               <Field label="Pesquisar alimento">
-                <div className="food-search">
+                <div className="food-search" ref={foodSearchRef}>
                   <Input
                     value={foodQuery}
                     autoComplete="off"
@@ -1333,7 +1428,7 @@ function MealDialog({
                   {foodSearchOpen && (
                     <div className="food-results">
                       {foodMatches.length ? (
-                        foodMatches.map((food) => (
+                        foodMatches.map(({ food, score }) => (
                           <button
                             type="button"
                             key={food.id}
@@ -1344,7 +1439,7 @@ function MealDialog({
                             }}
                           >
                             <strong>{food.name}</strong>
-                            <small>{Math.round(food.calories)} kcal / 100 g</small>
+                            <small><span>{Math.round(food.calories)} kcal / 100 g</span><em>{score ? foodMatchLabel(foodQuery, food, score) : 'Sugestão'}</em></small>
                           </button>
                         ))
                       ) : (
@@ -1353,18 +1448,18 @@ function MealDialog({
                     </div>
                   )}
                 </div>
-                <small className="field-hint">
-                  {resolvedFood
-                    ? `Correspondência: ${resolvedFood.name}`
-                    : `Escreve parte do nome para pesquisar nos ${portfirFoods.length.toLocaleString('pt-PT')} alimentos portugueses.`}
-                </small>
               </Field>
               <Field label="Peso (g)">
-                <NumberInput value={grams} min={1} max={2000} onChange={setGrams} />
+                <NumberInput value={grams} min={1} max={2000} ariaLabel="Peso do alimento em gramas" onChange={setGrams} />
               </Field>
               <Button type="button" onClick={addIngredient}>
                 <Plus /> Adicionar
               </Button>
+              <small className="field-hint food-match-hint">
+                {resolvedFood
+                  ? `Melhor correspondência: ${resolvedFood.name}`
+                  : `Escreve o nome ou uma descrição aproximada para pesquisar nos ${foodCatalog.length.toLocaleString('pt-PT')} alimentos.`}
+              </small>
             </div>
           ) : (
             <div className="manual-food">
@@ -1377,10 +1472,10 @@ function MealDialog({
                   />
                 </Field>
                 <Field label="Peso da porção (g)">
-                  <NumberInput value={grams} min={1} max={2000} onChange={setGrams} />
+                  <NumberInput value={grams} min={1} max={2000} ariaLabel="Peso da porção consumida em gramas" onChange={setGrams} />
                 </Field>
               </div>
-              <p className="field-hint">Valores para a porção consumida</p>
+              <p className="field-hint">Indica os valores do rótulo por 100 g. Proteína, hidratos, gordura e fibra são obrigatórios; a energia é calculada se ficar vazia.</p>
               <div className="form-grid four">
                 {(
                   [
@@ -1398,15 +1493,15 @@ function MealDialog({
                     key={key}
                     label={
                       key === 'calories'
-                        ? 'kcal'
+                        ? 'kcal (opcional)'
                         : key === 'protein'
-                          ? 'Proteína g'
+                          ? 'Proteína g *'
                           : key === 'carbs'
-                            ? 'Hidratos g'
+                            ? 'Hidratos g *'
                             : key === 'fat'
-                              ? 'Gordura g'
+                              ? 'Gordura g *'
                               : key === 'fiber'
-                                ? 'Fibra g'
+                                ? 'Fibra g *'
                                 : key === 'calcium'
                                   ? 'Cálcio mg'
                                   : key === 'iron'
@@ -1425,7 +1520,7 @@ function MealDialog({
                   </Field>
                 ))}
               </div>
-              <Button type="button" onClick={addIngredient}>
+              <Button type="button" disabled={!manualName.trim() || !manualComplete} onClick={addIngredient}>
                 <Plus /> Adicionar ingrediente
               </Button>
             </div>
@@ -1440,7 +1535,7 @@ function MealDialog({
                 <div>
                   <strong>{item.name}</strong>
                   <small>
-                    {item.grams} g · {item.source}
+                    {item.grams} g
                   </small>
                 </div>
                 <span>{Math.round(item.calories)} kcal</span>
@@ -2041,7 +2136,7 @@ function JudoPage({
   const [randoriMinutes, setRandoriMinutes] = useState(4);
   const [notes, setNotes] = useState('');
   const [tokuiCandidate, setTokuiCandidate] = useState(judoTechniques[0].id);
-  const [learningTechnique, setLearningTechnique] = useState(judoTechniques[0].id);
+  const [learningName, setLearningName] = useState('');
   const [learningMedia, setLearningMedia] = useState('');
   const [learningNotes, setLearningNotes] = useState('');
   const filteredTechniques = judoTechniques.filter((item) =>
@@ -2054,6 +2149,7 @@ function JudoPage({
   const mostUsed = Object.entries(techniqueCounts).sort((a, b) => b[1] - a[1])[0];
   const mostUsedTechnique = mostUsed ? judoTechniques.find((item) => item.id === mostUsed[0]) : undefined;
   const selectedVideo = judoTechniques.find((item) => item.id === videoTechniqueId);
+  useViewportLock(Boolean(selectedVideo || customVideo));
   const radarData = [
     { subject: 'Técnica', value: state.judoProfile.scores.technique },
     { subject: 'Físico', value: state.judoProfile.scores.physical },
@@ -2071,10 +2167,13 @@ function JudoPage({
   }
 
   function addLearningGoal() {
-    const techniqueItem = judoTechniques.find((item) => item.id === learningTechnique)!;
+    const name = learningName.trim();
+    if (!name) return;
+    const techniqueItem = judoTechniques.find((item) => normalizeText(item.name) === normalizeText(name));
     patchJudoProfile({
-      learningGoals: [...state.judoProfile.learningGoals, { id: uid(), techniqueId: techniqueItem.id, name: techniqueItem.name, mediaUrl: learningMedia.trim() || undefined, notes: learningNotes.trim(), progress: 0 }],
+      learningGoals: [...state.judoProfile.learningGoals, { id: uid(), techniqueId: techniqueItem?.id, name, mediaUrl: learningMedia.trim() || undefined, notes: learningNotes.trim(), progress: 0 }],
     });
+    setLearningName('');
     setLearningMedia('');
     setLearningNotes('');
   }
@@ -2145,7 +2244,7 @@ function JudoPage({
       <Card className="panel learning-card">
         <CardHeader><CardTitle>Roadmap — técnicas que quero aprender</CardTitle><CardDescription>Guarda uma referência do YouTube, Shorts ou Reel e acompanha o progresso.</CardDescription></CardHeader>
         <CardContent>
-          <div className="learning-builder"><Field label="Técnica"><select value={learningTechnique} onChange={(event) => setLearningTechnique(event.target.value)}>{judoTechniques.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="Link de vídeo/Reel (opcional)"><Input value={learningMedia} onChange={(event) => setLearningMedia(event.target.value)} placeholder="https://youtube.com/... ou instagram.com/reel/..." /></Field><Field label="O que quero melhorar"><Input value={learningNotes} onChange={(event) => setLearningNotes(event.target.value)} placeholder="Pegada, entrada, combinação…" /></Field><Button type="button" onClick={addLearningGoal}><Plus /> Adicionar ao roadmap</Button></div>
+          <div className="learning-builder"><Field label="Nome da técnica"><Input list="judo-technique-suggestions" value={learningName} onChange={(event) => setLearningName(event.target.value)} placeholder="Escreve qualquer nome…" /><datalist id="judo-technique-suggestions">{judoTechniques.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</datalist></Field><Field label="Link de vídeo/Reel (opcional)"><Input value={learningMedia} onChange={(event) => setLearningMedia(event.target.value)} placeholder="https://youtube.com/... ou instagram.com/reel/..." /></Field><Field label="O que quero melhorar"><Input value={learningNotes} onChange={(event) => setLearningNotes(event.target.value)} placeholder="Pegada, entrada, combinação…" /></Field><Button type="button" disabled={!learningName.trim()} onClick={addLearningGoal}><Plus /> Adicionar ao roadmap</Button></div>
           <div className="learning-list">{state.judoProfile.learningGoals.map((goal) => { const youtubeId = goal.mediaUrl ? youtubeIdFromUrl(goal.mediaUrl) : undefined; return <article key={goal.id}><div><strong>{goal.name}</strong><p>{goal.notes || 'Sem notas.'}</p>{goal.mediaUrl && (youtubeId ? <button type="button" className="media-chip" onClick={() => setCustomVideo({ title: goal.name, videoId: youtubeId })}><CirclePlay /> Abrir vídeo</button> : <a href={goal.mediaUrl} target="_blank" rel="noreferrer"><ExternalLink /> Abrir referência</a>)}</div><Field label="Progresso %"><NumberInput value={goal.progress} min={0} max={100} step="5" onChange={(progress) => patchJudoProfile({ learningGoals: state.judoProfile.learningGoals.map((item) => item.id === goal.id ? { ...item, progress } : item) })} /></Field><Button type="button" variant="ghost" size="icon" aria-label={`Apagar ${goal.name}`} onClick={() => patchJudoProfile({ learningGoals: state.judoProfile.learningGoals.filter((item) => item.id !== goal.id) })}><Trash2 /></Button></article>; })}</div>
         </CardContent>
       </Card>
@@ -3255,13 +3354,10 @@ function SettingsPage({
                 <Apple />
               </div>
               <div>
-                <strong>Tabela portuguesa PortFIR</strong>
+                <strong>Catálogo alimentar integrado</strong>
                 <p>
-                  Composição por 100 g para alimentos sem rótulo nutricional.
+                  Composição por 100 g, com alimentos portugueses e brasileiros num único catálogo sem repetições.
                 </p>
-                <a href={PORTFIR_URL} target="_blank" rel="noreferrer">
-                  Consultar referência →
-                </a>
               </div>
             </div>
           </CardContent>
@@ -3372,19 +3468,27 @@ function NumberInput({
   const [open, setOpen] = useState(false);
   const increment = Number(step);
   const precision = step.includes('.') ? step.split('.')[1].length : 0;
+  const wheelIncrement = useMemo(() => {
+    const rawCount = (max - min) / increment;
+    if (rawCount <= 1200) return increment;
+    const multiplier = Math.ceil(rawCount / 1200);
+    return Number((increment * multiplier).toFixed(precision));
+  }, [increment, max, min, precision]);
   const options = useMemo(() => {
     const values: number[] = [];
-    const count = Math.floor((max - min) / increment);
+    const count = Math.floor((max - min) / wheelIncrement);
     for (let index = 0; index <= count; index += 1) {
-      values.push(Number((min + index * increment).toFixed(precision)));
+      values.push(Number((min + index * wheelIncrement).toFixed(precision)));
     }
     if (value !== '' && !values.includes(value)) values.push(value);
     return values.sort((a, b) => a - b);
-  }, [increment, max, min, precision, value]);
+  }, [max, min, precision, value, wheelIncrement]);
   const initialValue = value === '' ? options[0] : value;
   const [draft, setDraft] = useState(initialValue);
+  const [manualDraft, setManualDraft] = useState(String(initialValue));
   const wheelRef = useRef<HTMLDivElement>(null);
   const itemHeight = 56;
+  useViewportLock(open);
 
   function formatOption(option: number) {
     return option.toLocaleString('pt-PT', {
@@ -3395,10 +3499,9 @@ function NumberInput({
 
   useEffect(() => {
     if (!open) return;
-    setDraft(initialValue);
     const index = Math.max(0, options.indexOf(initialValue));
     const frame = window.requestAnimationFrame(() => {
-      wheelRef.current?.scrollTo({ top: index * itemHeight });
+      if (wheelRef.current) wheelRef.current.scrollTop = index * itemHeight;
     });
     return () => window.cancelAnimationFrame(frame);
   }, [initialValue, open, options]);
@@ -3408,7 +3511,15 @@ function NumberInput({
       options.length - 1,
       Math.max(0, Math.round((wheelRef.current?.scrollTop ?? 0) / itemHeight)),
     );
-    setDraft(options[index]);
+    const selected = options[index];
+    setDraft(selected);
+    setManualDraft(formatOption(selected));
+  }
+
+  function parsedManualValue() {
+    const parsed = Number(manualDraft.trim().replace(',', '.'));
+    if (!Number.isFinite(parsed)) return draft;
+    return Number(Math.min(max, Math.max(min, parsed)).toFixed(precision));
   }
 
   return (
@@ -3417,10 +3528,15 @@ function NumberInput({
         type="button"
         className="number-picker-trigger"
         aria-label={ariaLabel}
-        onClick={() => setOpen(true)}
+        onClick={(event) => {
+          event.currentTarget.blur();
+          setDraft(initialValue);
+          setManualDraft(formatOption(initialValue));
+          setOpen(true);
+        }}
       >
         <span>{value === '' ? '—' : formatOption(value)}</span>
-        <small>deslizar para escolher</small>
+        <small>deslizar ou escrever</small>
       </button>
       {open && (
         <div
@@ -3448,9 +3564,10 @@ function NumberInput({
                     aria-selected={draft === option}
                     className={draft === option ? 'selected' : ''}
                     key={option}
-                    onClick={() => {
-                      setDraft(option);
-                      wheelRef.current?.scrollTo({ top: options.indexOf(option) * itemHeight, behavior: 'smooth' });
+                     onClick={() => {
+                       setDraft(option);
+                       setManualDraft(formatOption(option));
+                       wheelRef.current?.scrollTo({ top: options.indexOf(option) * itemHeight, behavior: 'smooth' });
                     }}
                   >
                     {formatOption(option)}
@@ -3458,9 +3575,19 @@ function NumberInput({
                 ))}
               </div>
             </div>
+            <div className="number-wheel-manual">
+              <span>Ou escreve o valor</span>
+              <Input
+                value={manualDraft}
+                inputMode="decimal"
+                autoComplete="off"
+                aria-label={`${ariaLabel ?? 'Valor'} introduzido manualmente`}
+                onChange={(event) => setManualDraft(event.target.value.replace(/[^0-9,.-]/g, ''))}
+              />
+            </div>
             <footer>
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
-              <Button type="button" onClick={() => { onChange(draft); setOpen(false); }}>Confirmar</Button>
+              <Button type="button" onClick={() => { onChange(parsedManualValue()); setOpen(false); }}>Confirmar</Button>
             </footer>
           </section>
         </div>
