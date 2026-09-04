@@ -228,3 +228,8 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 
 @media (max-width: 1000px) { .judo-command-grid { grid-template-columns: 1fr 1fr; }.judo-command-grid > :first-child { grid-column: 1 / -1; }.judo-dashboard-grid { grid-template-columns: 1fr; }.learning-builder { grid-template-columns: 1fr 1fr; }.learning-builder > button { grid-column: 1 / -1; } }
 @media (max-width: 620px) { .ingredient-input { grid-template-columns: minmax(0,1fr) 105px; padding: 13px; }.ingredient-input > button { grid-column: 1 / -1; }.water-custom { grid-template-columns: 1fr; }.judo-command-grid { grid-template-columns: 1fr; }.judo-command-grid > :first-child { grid-column: auto; }.judo-summary { grid-template-columns: 1fr 1fr; }.judo-summary .mini-stat { border-right: 1px solid var(--border); }.judo-summary .mini-stat:nth-child(2n) { border-right: 0; }.judo-score-editor { grid-template-columns: 1fr 1fr; }.learning-builder { grid-template-columns: 1fr; }.learning-builder > button { grid-column: auto; }.learning-list article { grid-template-columns: 1fr auto; }.learning-list article > .field { grid-column: 1; }.exercise-demo-dialog, .judo-video-dialog { border-radius: 20px 20px 0 0; }.exercise-demo-stats .mini-stat { padding: 13px 9px; }.technique-grid { grid-template-columns: 1fr 1fr; }.mobile-nav span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
+
+/* Number wheel contrast */
+.number-wheel-card > footer button:first-child { border-color: #527487; background: #193747; color: #f4fbff; }
+.number-wheel-card > footer button:first-child:hover { background: #23495d; color: #fff; }
+.number-wheel-card > footer button:last-child { border-color: #ef6f4c; background: #ef6f4c; color: #101820; }
