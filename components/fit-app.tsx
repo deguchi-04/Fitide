@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity as ActivityIcon,
   Apple,
@@ -1786,7 +1786,7 @@ function TrainingTimer({
     setFreeElapsed(0);
   }
 
-  function nextPhase() {
+  const nextPhase = useCallback(() => {
     if (phase === 'work') {
       if (round >= rounds) {
         setPhase('done');
@@ -1804,7 +1804,7 @@ function TrainingTimer({
       setPhase('work');
       setRemaining(workSeconds);
     }
-  }
+  }, [phase, restSeconds, round, rounds, workSeconds]);
 
   useEffect(() => {
     if (!running) return;
@@ -1820,7 +1820,7 @@ function TrainingTimer({
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [running, mode, phase, round, rounds, restSeconds, workSeconds]);
+  }, [running, mode, nextPhase]);
 
   function loadPreset(id: string) {
     const preset = state.intervalPresets.find((item) => item.id === id);
