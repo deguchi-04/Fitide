@@ -16,6 +16,7 @@ export const defaultState: AppState = {
   goals: suggestedGoals(profile, [], 'lose_fat'),
   activities: [],
   meals: [],
+  customFoods: [],
   weights: [],
   water: [],
   fasts: [],

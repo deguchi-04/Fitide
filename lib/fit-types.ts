@@ -52,6 +52,12 @@ export interface IngredientEntry extends Nutrients {
   source: 'Catálogo' | 'PortFIR' | 'TACO' | 'Rótulo';
 }
 
+export interface SavedFood extends Nutrients {
+  id: string;
+  name: string;
+  updatedAt: string;
+}
+
 export interface Meal {
   id: string;
   date: string;
@@ -166,6 +172,7 @@ export interface AppState {
   goals: Goals;
   activities: Activity[];
   meals: Meal[];
+  customFoods: SavedFood[];
   weights: WeightEntry[];
   water: WaterEntry[];
   fasts: FastEntry[];

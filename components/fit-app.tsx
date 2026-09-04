@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Activity as ActivityIcon,
   Apple,
@@ -51,6 +52,7 @@ import {
   RadarChart,
 } from 'recharts';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import { HealthFitness } from '@capacitor/health-fitness';
 import { Button } from '@/components/ui/button';
 import {
@@ -85,6 +87,7 @@ import type {
   Meal,
   Nutrients,
   Profile,
+  SavedFood,
   HealthSnapshot,
   WorkoutExercise,
   WorkoutPlan,
@@ -133,10 +136,10 @@ const navItems = [
   { id: 'calendar' as Page, label: 'Calendário', icon: CalendarDays },
   { id: 'progress' as Page, label: 'Progresso', icon: Scale },
 ];
-const pageOrder: Page[] = ['today', 'calendar', 'meals', 'workout', 'judo', 'progress', 'settings'];
+const pageOrder: Page[] = ['calendar', 'today', 'meals', 'workout', 'judo', 'progress', 'settings'];
 const mobileNavItems = [
-  { id: 'today' as Page, label: 'Hoje', icon: Home },
   { id: 'calendar' as Page, label: 'Calendário', icon: CalendarDays },
+  { id: 'today' as Page, label: 'Hoje', icon: Home },
   { id: 'meals' as Page, label: 'Refeições', icon: Utensils },
   { id: 'workout' as Page, label: 'Treino', icon: Dumbbell },
   { id: 'progress' as Page, label: 'Progresso', icon: Scale },
@@ -218,7 +221,30 @@ const foodSynonymGroups = [
   ['porco', 'suino'],
   ['suco', 'sumo'],
   ['vaca', 'boi', 'bovino'],
+  ['konbu', 'kombu'],
+  ['proteina de soro', 'whey protein', 'whey'],
 ];
+
+type QuantityMode = 'g' | 'unit' | 'ml';
+
+const unitWeightRules: Array<[RegExp, number]> = [
+  [/ovo/, 55], [/banana/, 120], [/(laranja|orange)/, 180], [/(maca|apple)/, 160],
+  [/(pera|pear)/, 170], [/(kiwi)/, 75], [/(tangerina|mandarina)/, 120], [/(pessego|peach)/, 150],
+  [/(tomate|tomato)/, 120], [/(cebola|onion)/, 110], [/(batata|potato)/, 150], [/(pao|bread)/, 50],
+];
+
+function averageUnitGrams(foodName: string) {
+  const clean = normalizeText(foodName);
+  return unitWeightRules.find(([pattern]) => pattern.test(clean))?.[1] ?? 100;
+}
+
+function liquidDensity(foodName: string) {
+  const clean = normalizeText(foodName);
+  if (/(azeite|oleo|oil)/.test(clean)) return 0.92;
+  if (/(mel|honey)/.test(clean)) return 1.42;
+  if (/(leite|milk|iogurte|yogurt)/.test(clean)) return 1.03;
+  return 1;
+}
 
 function foodQueryVariants(value: string) {
   const clean = normalizeText(value);
@@ -307,6 +333,11 @@ function useViewportLock(active: boolean) {
   }, [active]);
 }
 
+function OverlayPortal({ children }: { children: React.ReactNode }) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(children, document.body);
+}
+
 function formatDuration(totalSeconds: number) {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -327,6 +358,7 @@ function mergeState(saved: Partial<AppState>): AppState {
     goals: { ...defaultState.goals, ...saved.goals },
     activities: saved.activities ?? [],
     meals: saved.meals ?? [],
+    customFoods: saved.customFoods ?? [],
     weights: saved.weights ?? [],
     water: saved.water ?? [],
     fasts: saved.fasts ?? [],
@@ -357,6 +389,7 @@ export default function FitApp() {
     'loading',
   );
   const [mealOpen, setMealOpen] = useState(false);
+  const [editingMeal, setEditingMeal] = useState<Meal | null>(null);
   const [now, setNow] = useState(Date.now());
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -377,6 +410,22 @@ export default function FitApp() {
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let removeListener: (() => Promise<void>) | undefined;
+    void CapacitorApp.addListener('backButton', () => {
+      const overlayBack = new Event('fitide-back', { cancelable: true });
+      window.dispatchEvent(overlayBack);
+      if (overlayBack.defaultPrevented) return;
+      if (mealOpen) {
+        setMealOpen(false);
+        setEditingMeal(null);
+      } else if (page === 'judo') setPage('workout');
+      else if (page !== 'today') setPage('today');
+    }).then((handle) => { removeListener = () => handle.remove(); });
+    return () => { void removeListener?.(); };
+  }, [mealOpen, page]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -464,7 +513,7 @@ export default function FitApp() {
       ...defaultState,
       profile: { ...defaultState.profile },
       goals: { ...defaultState.goals },
-      activities: [], meals: [], weights: [], water: [], fasts: [], workoutPlans: [], workoutSessions: [],
+      activities: [], meals: [], customFoods: [], weights: [], water: [], fasts: [], workoutPlans: [], workoutSessions: [],
       intervalPresets: [...defaultState.intervalPresets], judoPractices: [],
       judoProfile: { ...defaultState.judoProfile, scores: { ...defaultState.judoProfile.scores }, tokuiWazaIds: [], learningGoals: [] },
       healthSnapshots: [],
@@ -588,7 +637,8 @@ export default function FitApp() {
             onWater={updateWater}
             onFast={toggleFast}
             onPastFast={addPastFast}
-            onAddMeal={() => setMealOpen(true)}
+            onAddMeal={() => { setEditingMeal(null); setMealOpen(true); }}
+            onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
             onGo={setPage}
           />
         )}
@@ -597,7 +647,8 @@ export default function FitApp() {
             meals={dayMeals}
             consumed={consumed}
             date={selectedDate}
-            onAdd={() => setMealOpen(true)}
+            onAdd={() => { setEditingMeal(null); setMealOpen(true); }}
+            onEdit={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
             onDelete={(id) =>
               patchState({
                 meals: state.meals.filter((meal) => meal.id !== id),
@@ -617,6 +668,7 @@ export default function FitApp() {
             selectedDate={selectedDate}
             setSelectedDate={setSelectedDate}
             onOpenDay={() => setPage('today')}
+            onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
           />
         )}
         {page === 'progress' && (
@@ -645,7 +697,7 @@ export default function FitApp() {
         <button
           className="add"
           aria-label="Adicionar refeição"
-          onClick={() => setMealOpen(true)}
+          onClick={() => { setEditingMeal(null); setMealOpen(true); }}
         >
           <Plus />
         </button>
@@ -653,11 +705,16 @@ export default function FitApp() {
 
       {mealOpen && (
         <MealDialog
+          key={editingMeal?.id ?? 'new-meal'}
           date={selectedDate}
-          onClose={() => setMealOpen(false)}
+          meal={editingMeal ?? undefined}
+          customFoods={state.customFoods}
+          onCustomFoodsChange={(customFoods) => patchState({ customFoods })}
+          onClose={() => { setMealOpen(false); setEditingMeal(null); }}
           onSave={(meal) => {
-            patchState({ meals: [...state.meals, meal] });
+            patchState({ meals: editingMeal ? state.meals.map((item) => item.id === meal.id ? meal : item) : [...state.meals, meal] });
             setMealOpen(false);
+            setEditingMeal(null);
           }}
         />
       )}
@@ -870,6 +927,7 @@ function TodayPage({
   onFast,
   onPastFast,
   onAddMeal,
+  onEditMeal,
   onGo,
 }: {
   state: AppState;
@@ -882,6 +940,7 @@ function TodayPage({
   onFast: () => void;
   onPastFast: (startTime: string, endTime: string) => void;
   onAddMeal: () => void;
+  onEditMeal: (meal: Meal) => void;
   onGo: (page: Page) => void;
 }) {
   const caloriePercent = Math.min(
@@ -901,9 +960,10 @@ function TodayPage({
   const [pastFastEnd, setPastFastEnd] = useState('12:00');
   const [waterMl, setWaterMl] = useState(250);
   const macroPie = [
-    { name: 'Proteína', value: Math.round(consumed.protein * 4), fill: '#168fbd' },
-    { name: 'Hidratos', value: Math.round(consumed.carbs * 4), fill: '#ef6f4c' },
-    { name: 'Gordura', value: Math.round(consumed.fat * 9), fill: '#70463b' },
+    { name: 'Proteína', value: Math.round(consumed.protein * 4), fill: '#087fb7' },
+    { name: 'Hidratos', value: Math.round(consumed.carbs * 4), fill: '#f06742' },
+    { name: 'Gordura', value: Math.round(consumed.fat * 9), fill: '#13805f' },
+    { name: 'Fibra', value: Math.round(consumed.fiber * 2), fill: '#35a6d1' },
   ].filter((item) => item.value > 0);
   return (
     <div className="dashboard-grid page-enter">
@@ -997,7 +1057,7 @@ function TodayPage({
             state.meals
               .filter((meal) => meal.date === date)
               .slice(-3)
-              .map((meal) => <MealRow meal={meal} key={meal.id} />)
+              .map((meal) => <button type="button" className="meal-edit-button" onClick={() => onEditMeal(meal)} key={meal.id}><MealRow meal={meal} /></button>)
           ) : (
             <EmptyState
               icon={Utensils}
@@ -1162,12 +1222,14 @@ function MealsPage({
   consumed,
   date,
   onAdd,
+  onEdit,
   onDelete,
 }: {
   meals: Meal[];
   consumed: Nutrients;
   date: string;
   onAdd: () => void;
+  onEdit: (meal: Meal) => void;
   onDelete: (id: string) => void;
 }) {
   return (
@@ -1206,7 +1268,9 @@ function MealsPage({
           meals.map((meal) => (
             <Card key={meal.id} className="meal-card">
               <CardContent>
-                <MealRow meal={meal} expanded />
+                <button type="button" className="meal-edit-button" onClick={() => onEdit(meal)} aria-label={`Editar ${meal.type}`}>
+                  <MealRow meal={meal} expanded />
+                </button>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -1238,21 +1302,30 @@ function MealsPage({
 
 function MealDialog({
   date,
+  meal,
+  customFoods,
+  onCustomFoodsChange,
   onClose,
   onSave,
 }: {
   date: string;
+  meal?: Meal;
+  customFoods: SavedFood[];
+  onCustomFoodsChange: (foods: SavedFood[]) => void;
   onClose: () => void;
   onSave: (meal: Meal) => void;
 }) {
-  const [type, setType] = useState('Almoço');
+  const [type, setType] = useState(meal?.type ?? 'Almoço');
   const [mode, setMode] = useState<'Catálogo' | 'Rótulo'>('Catálogo');
   const [foodId, setFoodId] = useState(foodCatalog[0].id);
   const [foodQuery, setFoodQuery] = useState('');
   const [foodSearchOpen, setFoodSearchOpen] = useState(false);
   const foodSearchRef = useRef<HTMLDivElement>(null);
   const [grams, setGrams] = useState(100);
+  const [quantityMode, setQuantityMode] = useState<QuantityMode>('g');
   const [manualName, setManualName] = useState('');
+  const [saveToCatalog, setSaveToCatalog] = useState(false);
+  const [editingFoodId, setEditingFoodId] = useState<string | null>(null);
   const [manual, setManual] = useState<Record<keyof Nutrients, number | ''>>({
     calories: '',
     protein: '',
@@ -1263,12 +1336,16 @@ function MealDialog({
     iron: '',
     vitaminC: '',
   });
-  const [ingredients, setIngredients] = useState<IngredientEntry[]>([]);
+  const [ingredients, setIngredients] = useState<IngredientEntry[]>(meal?.ingredients ?? []);
   const total = roundNutrients(sumNutrients(ingredients));
-  const selectedFood = foodCatalog.find((food) => food.id === foodId);
+  const availableFoods = useMemo<FoodCatalogItem[]>(() => [
+    ...customFoods.map((food) => ({ id: food.id, name: food.name, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber, calcium: food.calcium, iron: food.iron, vitaminC: food.vitaminC })),
+    ...foodCatalog,
+  ], [customFoods]);
+  const selectedFood = availableFoods.find((food) => food.id === foodId);
   const foodMatches = useMemo(() => {
-    if (!foodQuery.trim()) return foodCatalog.slice(0, 8).map((food) => ({ food, score: 0 }));
-    return foodCatalog
+    if (!foodQuery.trim()) return availableFoods.slice(0, 8).map((food) => ({ food, score: 0 }));
+    return availableFoods
       .map((food) => ({ food, score: foodMatchScore(foodQuery, food.name) }))
       .filter(({ score }) => score > 0)
       .sort(
@@ -1276,7 +1353,7 @@ function MealDialog({
           b.score - a.score || a.food.name.localeCompare(b.food.name, 'pt'),
       )
       .slice(0, 10);
-  }, [foodQuery]);
+  }, [availableFoods, foodQuery]);
   const resolvedFood = foodQuery.trim()
     ? normalizeText(selectedFood?.name ?? '') === normalizeText(foodQuery)
       ? selectedFood
@@ -1284,6 +1361,13 @@ function MealDialog({
     : selectedFood;
   const requiredManualKeys: Array<keyof Nutrients> = ['protein', 'carbs', 'fat', 'fiber'];
   const manualComplete = requiredManualKeys.every((key) => manual[key] !== '');
+  const catalogGrams = resolvedFood
+    ? quantityMode === 'unit'
+      ? grams * averageUnitGrams(resolvedFood.name)
+      : quantityMode === 'ml'
+        ? grams * liquidDensity(resolvedFood.name)
+        : grams
+    : grams;
 
   useEffect(() => {
     if (!foodSearchOpen) return;
@@ -1305,13 +1389,13 @@ function MealDialog({
     if (mode === 'Catálogo') {
       const food = resolvedFood;
       if (!food) return;
-      const factor = grams / 100;
+      const factor = catalogGrams / 100;
       setIngredients([
         ...ingredients,
         {
           id: uid(),
           name: food.name,
-          grams,
+          grams: Math.round(catalogGrams * 10) / 10,
           source: 'Catálogo',
           ...roundNutrients({
             calories: food.calories * factor,
@@ -1359,6 +1443,19 @@ function MealDialog({
           }),
         },
       ]);
+      if (saveToCatalog) {
+        const sameName = customFoods.find((food) => normalizeText(food.name) === normalizeText(manualName));
+        const savedId = editingFoodId ?? sameName?.id ?? uid();
+        const savedFood: SavedFood = {
+          id: savedId,
+          name: manualName.trim(),
+          ...roundNutrients(per100),
+          updatedAt: new Date().toISOString(),
+        };
+        onCustomFoodsChange(editingFoodId || sameName
+          ? customFoods.map((food) => food.id === savedId ? savedFood : food)
+          : [savedFood, ...customFoods]);
+      }
       setManualName('');
       setManual({
         calories: '',
@@ -1371,7 +1468,27 @@ function MealDialog({
         vitaminC: '',
       });
       setGrams(100);
+      setSaveToCatalog(false);
+      setEditingFoodId(null);
     }
+  }
+
+  function editSavedFood(food: SavedFood) {
+    setMode('Rótulo');
+    setEditingFoodId(food.id);
+    setManualName(food.name);
+    setManual({
+      calories: food.calories,
+      protein: food.protein,
+      carbs: food.carbs,
+      fat: food.fat,
+      fiber: food.fiber,
+      calcium: food.calcium,
+      iron: food.iron,
+      vitaminC: food.vitaminC,
+    });
+    setGrams(100);
+    setSaveToCatalog(true);
   }
 
   return (
@@ -1384,8 +1501,8 @@ function MealDialog({
       >
         <header>
           <div>
-            <p className="eyebrow">NOVA REFEIÇÃO</p>
-            <h2 id="meal-title">O que comeste?</h2>
+            <p className="eyebrow">{meal ? 'EDITAR REFEIÇÃO' : 'NOVA REFEIÇÃO'}</p>
+            <h2 id="meal-title">{meal ? 'Corrige os dados da refeição' : 'O que comeste?'}</h2>
           </div>
           <Button variant="ghost" size="icon" aria-label="Fechar" onClick={onClose}>
             <X />
@@ -1412,6 +1529,7 @@ function MealDialog({
                   onClick={() => {
                     setMode('Catálogo');
                     setGrams(100);
+                    setQuantityMode('g');
                   }}
                   type="button"
                 >
@@ -1422,6 +1540,7 @@ function MealDialog({
                   onClick={() => {
                     setMode('Rótulo');
                     setGrams(100);
+                    setQuantityMode('g');
                     setFoodSearchOpen(false);
                   }}
                   type="button"
@@ -1443,6 +1562,7 @@ function MealDialog({
                     onChange={(event) => {
                       setFoodQuery(event.target.value);
                       setGrams(100);
+                      setQuantityMode('g');
                       setFoodSearchOpen(true);
                     }}
                   />
@@ -1457,6 +1577,7 @@ function MealDialog({
                               setFoodId(food.id);
                               setFoodQuery(food.name);
                               setGrams(100);
+                              setQuantityMode('g');
                               setFoodSearchOpen(false);
                             }}
                           >
@@ -1471,16 +1592,23 @@ function MealDialog({
                   )}
                 </div>
               </Field>
-              <Field label="Peso (g)">
-                <NumberInput value={grams} min={1} max={2000} ariaLabel="Peso do alimento em gramas" onChange={setGrams} />
+              <Field label="Quantidade">
+                <div className="quantity-control">
+                  <div className="quantity-modes" aria-label="Unidade da quantidade">
+                    {([['g', 'gramas'], ['unit', 'unid.'], ['ml', 'ml']] as Array<[QuantityMode, string]>).map(([value, label]) => (
+                      <button type="button" key={value} className={quantityMode === value ? 'selected' : ''} onClick={() => { setQuantityMode(value); setGrams(value === 'unit' ? 1 : value === 'ml' ? 250 : 100); }}>{label}</button>
+                    ))}
+                  </div>
+                  <NumberInput value={grams} min={quantityMode === 'unit' ? 0.5 : 1} max={quantityMode === 'unit' ? 30 : 2000} step={quantityMode === 'unit' ? '0.5' : '1'} ariaLabel="Quantidade do alimento" onChange={setGrams} />
+                </div>
               </Field>
               <Button type="button" onClick={addIngredient}>
                 <Plus /> Adicionar
               </Button>
               <small className="field-hint food-match-hint">
                 {resolvedFood
-                  ? `Melhor correspondência: ${resolvedFood.name}`
-                  : `Escreve o nome ou uma descrição aproximada para pesquisar nos ${foodCatalog.length.toLocaleString('pt-PT')} alimentos.`}
+                  ? `${resolvedFood.name} · ${quantityMode === 'g' ? `${grams} g` : `estimativa de ${Math.round(catalogGrams)} g`}`
+                  : `Escreve o nome ou uma descrição aproximada para pesquisar nos ${availableFoods.length.toLocaleString('pt-PT')} alimentos.`}
               </small>
             </div>
           ) : (
@@ -1545,9 +1673,25 @@ function MealDialog({
                   </Field>
                 ))}
               </div>
+              <label className="save-food-option">
+                <input type="checkbox" checked={saveToCatalog} onChange={(event) => setSaveToCatalog(event.target.checked)} />
+                <span>{editingFoodId ? 'Atualizar este alimento no meu catálogo' : 'Guardar este ingrediente no meu catálogo'}</span>
+              </label>
               <Button type="button" disabled={!manualName.trim() || !manualComplete} onClick={addIngredient}>
-                <Plus /> Adicionar ingrediente
+                <Plus /> {editingFoodId ? 'Atualizar e adicionar' : 'Adicionar ingrediente'}
               </Button>
+              {customFoods.length > 0 && (
+                <div className="saved-foods">
+                  <strong>Os meus alimentos</strong>
+                  {customFoods.map((food) => (
+                    <div key={food.id}>
+                      <span>{food.name}</span>
+                      <Button type="button" variant="ghost" size="icon" aria-label={`Editar ${food.name}`} onClick={() => editSavedFood(food)}><Settings /></Button>
+                      <Button type="button" variant="ghost" size="icon" aria-label={`Apagar ${food.name}`} onClick={() => onCustomFoodsChange(customFoods.filter((item) => item.id !== food.id))}><Trash2 /></Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           <div className="ingredient-list">
@@ -1597,15 +1741,15 @@ function MealDialog({
             disabled={!ingredients.length}
             onClick={() =>
               onSave({
-                id: uid(),
-                date,
+                id: meal?.id ?? uid(),
+                date: meal?.date ?? date,
                 type,
                 ingredients,
-                createdAt: new Date().toISOString(),
+                createdAt: meal?.createdAt ?? new Date().toISOString(),
               })
             }
           >
-            <Save /> Guardar refeição
+            <Save /> {meal ? 'Guardar alterações' : 'Guardar refeição'}
           </Button>
         </footer>
       </section>
@@ -1933,8 +2077,13 @@ function PlanCard({
 }
 
 function ExerciseDemoDialog({ exercise, onClose }: { exercise: WorkoutExercise; onClose: () => void }) {
+  useEffect(() => {
+    const close = (event: Event) => { event.preventDefault(); onClose(); };
+    window.addEventListener('fitide-back', close);
+    return () => window.removeEventListener('fitide-back', close);
+  }, [onClose]);
   return (
-    <div className="dialog-backdrop exercise-demo-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <OverlayPortal><div className="dialog-backdrop exercise-demo-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="exercise-demo-dialog" role="dialog" aria-modal="true" aria-labelledby="exercise-demo-title">
         <header>
           <div><p className="eyebrow">EXECUÇÃO</p><h2 id="exercise-demo-title">{exercise.name}</h2></div>
@@ -1944,7 +2093,7 @@ function ExerciseDemoDialog({ exercise, onClose }: { exercise: WorkoutExercise; 
         <div className="exercise-demo-stats"><MiniStat label="Séries" value={String(exercise.sets)} /><MiniStat label="Repetições" value={exercise.reps} /><MiniStat label="Descanso" value={`${exercise.restSeconds} s`} /></div>
         <p>{exercise.target} · {exercise.equipment}</p>
       </section>
-    </div>
+    </div></OverlayPortal>
   );
 }
 
@@ -2175,6 +2324,12 @@ function JudoPage({
   const mostUsedTechnique = mostUsed ? judoTechniques.find((item) => item.id === mostUsed[0]) : undefined;
   const selectedVideo = judoTechniques.find((item) => item.id === videoTechniqueId);
   useViewportLock(Boolean(selectedVideo || customVideo));
+  useEffect(() => {
+    if (!selectedVideo && !customVideo) return;
+    const close = (event: Event) => { event.preventDefault(); setVideoTechniqueId(null); setCustomVideo(null); };
+    window.addEventListener('fitide-back', close);
+    return () => window.removeEventListener('fitide-back', close);
+  }, [customVideo, selectedVideo]);
   const radarData = [
     { subject: 'Técnica', value: state.judoProfile.scores.technique },
     { subject: 'Físico', value: state.judoProfile.scores.physical },
@@ -2297,10 +2452,25 @@ function JudoPage({
         <CardHeader><div><p className="eyebrow">KODOKAN</p><CardTitle>Biblioteca técnica com vídeo</CardTitle><CardDescription>Abre apenas a demonstração escolhida, diretamente dentro da Fitide.</CardDescription></div><Input aria-label="Procurar técnica" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Procurar uchi-mata…" /></CardHeader>
         <CardContent>
           <div className="technique-filters">{(Object.keys(judoCategoryLabels) as Array<JudoCategory | 'Todas'>).map((item) => <button type="button" key={item} className={category === item ? 'selected' : ''} onClick={() => setCategory(item)}>{judoCategoryLabels[item]}</button>)}</div>
-          <div className="technique-grid">{filteredTechniques.map((item) => <article key={item.id} className={selected.includes(item.id) ? 'selected' : ''}><button type="button" className="technique-select" onClick={() => setSelected((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}><span>{item.japanese}</span><strong>{item.name}</strong><small>{judoCategoryLabels[item.category]}</small></button><button type="button" className="technique-video" onClick={() => setVideoTechniqueId(item.id)}><CirclePlay /> Ver vídeo Kodokan</button></article>)}</div>
+          <div className="technique-grid">{filteredTechniques.map((item) => (
+            <article key={item.id} className={selected.includes(item.id) ? 'selected' : ''}>
+              <button type="button" className="technique-select" onClick={() => setSelected((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}><span>{item.japanese}</span><strong>{item.name}</strong><small>{judoCategoryLabels[item.category]}</small></button>
+              <button type="button" className="technique-video" disabled={!item.videoId} onClick={() => item.videoId && setVideoTechniqueId(item.id)}><CirclePlay /> {item.videoId ? 'Ver vídeo Kodokan' : 'Vídeo em breve'}</button>
+            </article>
+          ))}</div>
         </CardContent>
       </Card>
-      {(selectedVideo || customVideo) && <div className="dialog-backdrop video-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) { setVideoTechniqueId(null); setCustomVideo(null); } }}><section className="judo-video-dialog" role="dialog" aria-modal="true" aria-labelledby="judo-video-title"><header><div><p className="eyebrow">VÍDEO NO FITIDE</p><h2 id="judo-video-title">{selectedVideo?.name ?? customVideo?.title}</h2></div><Button type="button" variant="ghost" size="icon" aria-label="Fechar vídeo" onClick={() => { setVideoTechniqueId(null); setCustomVideo(null); }}><X /></Button></header><div className="video-frame"><iframe src={`https://www.youtube-nocookie.com/embed/${selectedVideo?.videoId ?? customVideo?.videoId}?rel=0`} title={`Demonstração de ${selectedVideo?.name ?? customVideo?.title}`} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /></div>{selectedVideo && <p>{selectedVideo.japanese} · {judoCategoryLabels[selectedVideo.category]}</p>}</section></div>}
+      {(selectedVideo || customVideo) && (
+        <OverlayPortal>
+          <div className="dialog-backdrop video-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) { setVideoTechniqueId(null); setCustomVideo(null); } }}>
+            <section className="judo-video-dialog" role="dialog" aria-modal="true" aria-labelledby="judo-video-title">
+              <header><div><p className="eyebrow">VÍDEO NO FITIDE</p><h2 id="judo-video-title">{selectedVideo?.name ?? customVideo?.title}</h2></div><Button type="button" variant="ghost" size="icon" aria-label="Fechar vídeo" onClick={() => { setVideoTechniqueId(null); setCustomVideo(null); }}><X /></Button></header>
+              <div className="video-frame"><iframe src={`https://www.youtube-nocookie.com/embed/${selectedVideo?.videoId ?? customVideo?.videoId}?rel=0`} title={`Demonstração de ${selectedVideo?.name ?? customVideo?.title}`} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /></div>
+              {selectedVideo && <p>{selectedVideo.japanese} · {judoCategoryLabels[selectedVideo.category]}</p>}
+            </section>
+          </div>
+        </OverlayPortal>
+      )}
     </div>
   );
 }
@@ -2310,16 +2480,22 @@ function CalendarPage({
   selectedDate,
   setSelectedDate,
   onOpenDay,
+  onEditMeal,
 }: {
   state: AppState;
   selectedDate: string;
   setSelectedDate: (date: string) => void;
   onOpenDay: () => void;
+  onEditMeal: (meal: Meal) => void;
 }) {
   const [month, setMonth] = useState(() => {
     const date = new Date(`${selectedDate}T12:00:00`);
     return new Date(date.getFullYear(), date.getMonth(), 1);
   });
+  const calendarSwipeStart = useRef<number | null>(null);
+  function changeMonth(delta: number) {
+    setMonth((current) => new Date(current.getFullYear(), current.getMonth() + delta, 1));
+  }
   const start = new Date(month.getFullYear(), month.getMonth(), 1);
   const first = new Date(start);
   first.setDate(first.getDate() - first.getDay());
@@ -2366,14 +2542,24 @@ function CalendarPage({
         </div>
       </section>
       <div className="calendar-layout">
-        <Card className="panel calendar-card">
+        <Card
+          className="panel calendar-card calendar-interactive"
+          onTouchStart={(event) => { event.stopPropagation(); calendarSwipeStart.current = event.touches[0]?.clientX ?? null; }}
+          onTouchMove={(event) => event.stopPropagation()}
+          onTouchEnd={(event) => {
+            event.stopPropagation();
+            const startX = calendarSwipeStart.current;
+            calendarSwipeStart.current = null;
+            if (startX === null) return;
+            const distance = (event.changedTouches[0]?.clientX ?? startX) - startX;
+            if (Math.abs(distance) >= 48) changeMonth(distance < 0 ? 1 : -1);
+          }}
+        >
           <CardHeader className="calendar-head">
             <Button
               variant="ghost"
               size="icon"
-              onClick={() =>
-                setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))
-              }
+              onClick={() => changeMonth(-1)}
             >
               <ChevronLeft />
             </Button>
@@ -2386,9 +2572,7 @@ function CalendarPage({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() =>
-                setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))
-              }
+              onClick={() => changeMonth(1)}
             >
               <ChevronRight />
             </Button>
@@ -2461,7 +2645,7 @@ function CalendarPage({
             <div className="day-meals">
               <strong>Refeições</strong>
               {dayMeals.length ? (
-                dayMeals.map((meal) => <MealRow meal={meal} key={meal.id} />)
+                dayMeals.map((meal) => <button type="button" className="meal-edit-button" onClick={() => onEditMeal(meal)} key={meal.id}><MealRow meal={meal} /></button>)
               ) : (
                 <p>Sem refeições registadas.</p>
               )}
@@ -2519,6 +2703,7 @@ function ProgressPage({
       label: new Date(`${date}T12:00:00`).toLocaleDateString('pt-PT', range === 'week' ? { weekday: 'short' } : { day: '2-digit', month: '2-digit' }).slice(0, range === 'week' ? 3 : undefined),
       protein: Math.round(nutrients.protein),
       carbs: Math.round(nutrients.carbs),
+      fat: Math.round(nutrients.fat),
       water: state.water.find((entry) => entry.date === date)?.liters ?? 0,
     };
   });
@@ -2534,6 +2719,7 @@ function ProgressPage({
           label: month.toLocaleDateString('pt-PT', { month: 'short' }).slice(0, 3),
           protein: Math.round(nutrients.protein),
           carbs: Math.round(nutrients.carbs),
+          fat: Math.round(nutrients.fat),
           water: Math.round(state.water.filter((entry) => entry.date.startsWith(prefix)).reduce((sum, entry) => sum + entry.liters, 0) * 1000) / 1000,
         };
       })
@@ -2702,6 +2888,7 @@ function ProgressPage({
               config={{
                 protein: { label: 'Proteína', color: '#168fbd' },
                 carbs: { label: 'Hidratos', color: '#ef6f4c' },
+                fat: { label: 'Gordura', color: '#13805f' },
               }}
             >
               <BarChart data={historyData}>
@@ -2717,6 +2904,11 @@ function ProgressPage({
                 <Bar
                   dataKey="carbs"
                   fill="var(--color-carbs)"
+                  radius={[5, 5, 0, 0]}
+                />
+                <Bar
+                  dataKey="fat"
+                  fill="var(--color-fat)"
                   radius={[5, 5, 0, 0]}
                 />
               </BarChart>
@@ -3407,13 +3599,13 @@ function SettingsPage({
         </div>
       </form>
       {confirmReset && (
-        <div className="dialog-backdrop" role="presentation">
+        <OverlayPortal><div className="dialog-backdrop" role="presentation">
           <section className="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="reset-title">
             <h3 id="reset-title">Apagar todo o perfil?</h3>
             <p>Esta ação remove permanentemente todos os registos da Fitide e volta ao ecrã inicial.</p>
             <div><Button variant="outline" onClick={() => setConfirmReset(false)}>Cancelar</Button><Button className="danger-button solid" onClick={async () => { setConfirmReset(false); await onReset(); }}>Sim, apagar tudo</Button></div>
           </section>
-        </div>
+        </div></OverlayPortal>
       )}
     </div>
   );
@@ -3508,6 +3700,12 @@ function NumberInput({
   const wheelRef = useRef<HTMLDivElement>(null);
   const itemHeight = 56;
   useViewportLock(open);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: Event) => { event.preventDefault(); setOpen(false); };
+    window.addEventListener('fitide-back', close);
+    return () => window.removeEventListener('fitide-back', close);
+  }, [open]);
 
   function formatOption(option: number) {
     return option.toLocaleString('pt-PT', {
@@ -3558,7 +3756,7 @@ function NumberInput({
         <small>deslizar ou escrever</small>
       </button>
       {open && (
-        <div
+        <OverlayPortal><div
           className="number-wheel-backdrop"
           role="presentation"
           onClick={(event) => {
@@ -3609,7 +3807,7 @@ function NumberInput({
               <Button type="button" onClick={() => { onChange(parsedManualValue()); setOpen(false); }}>Confirmar</Button>
             </footer>
           </section>
-        </div>
+        </div></OverlayPortal>
       )}
     </>
   );
