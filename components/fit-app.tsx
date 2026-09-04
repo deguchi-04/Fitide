@@ -1132,9 +1132,14 @@ function TodayPage({
         <CardContent className="macro-overview">
           <div className="macro-pie">
             {macroPie.length ? (
-              <ChartContainer className="h-[220px] w-full" config={{ protein: { label: 'Proteína', color: '#168fbd' } }}>
-                <PieChart><ChartTooltip content={<ChartTooltipContent nameKey="name" />} /><Pie data={macroPie} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={3} /></PieChart>
-              </ChartContainer>
+              <>
+                <ChartContainer className="macro-pie-chart" config={{ protein: { label: 'Proteína', color: '#168fbd' } }}>
+                  <PieChart><ChartTooltip content={<ChartTooltipContent nameKey="name" />} /><Pie data={macroPie} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={52} outerRadius={82} paddingAngle={3} /></PieChart>
+                </ChartContainer>
+                <div className="macro-pie-legend" aria-label="Legenda dos macronutrientes">
+                  {macroPie.map((item) => <span key={item.name}><i style={{ backgroundColor: item.fill }} />{item.name}</span>)}
+                </div>
+              </>
             ) : (
               <EmptyState icon={Apple} title="Ainda sem macros" text="Adiciona uma refeição para veres a distribuição." />
             )}
@@ -1393,7 +1398,10 @@ function MealDialog({
               <div className="segmented">
                 <button
                   className={mode === 'Catálogo' ? 'selected' : ''}
-                  onClick={() => setMode('Catálogo')}
+                  onClick={() => {
+                    setMode('Catálogo');
+                    setGrams(100);
+                  }}
                   type="button"
                 >
                   Catálogo
@@ -1402,6 +1410,7 @@ function MealDialog({
                   className={mode === 'Rótulo' ? 'selected' : ''}
                   onClick={() => {
                     setMode('Rótulo');
+                    setGrams(100);
                     setFoodSearchOpen(false);
                   }}
                   type="button"
@@ -1422,6 +1431,7 @@ function MealDialog({
                     onFocus={() => setFoodSearchOpen(true)}
                     onChange={(event) => {
                       setFoodQuery(event.target.value);
+                      setGrams(100);
                       setFoodSearchOpen(true);
                     }}
                   />
@@ -1435,6 +1445,7 @@ function MealDialog({
                             onClick={() => {
                               setFoodId(food.id);
                               setFoodQuery(food.name);
+                              setGrams(100);
                               setFoodSearchOpen(false);
                             }}
                           >
@@ -1467,7 +1478,10 @@ function MealDialog({
                 <Field label="Nome">
                   <Input
                     value={manualName}
-                    onChange={(e) => setManualName(e.target.value)}
+                    onChange={(e) => {
+                      setManualName(e.target.value);
+                      setGrams(100);
+                    }}
                     placeholder="Ex.: iogurte proteico"
                   />
                 </Field>
@@ -3468,21 +3482,15 @@ function NumberInput({
   const [open, setOpen] = useState(false);
   const increment = Number(step);
   const precision = step.includes('.') ? step.split('.')[1].length : 0;
-  const wheelIncrement = useMemo(() => {
-    const rawCount = (max - min) / increment;
-    if (rawCount <= 1200) return increment;
-    const multiplier = Math.ceil(rawCount / 1200);
-    return Number((increment * multiplier).toFixed(precision));
-  }, [increment, max, min, precision]);
   const options = useMemo(() => {
     const values: number[] = [];
-    const count = Math.floor((max - min) / wheelIncrement);
+    const count = Math.floor((max - min) / increment);
     for (let index = 0; index <= count; index += 1) {
-      values.push(Number((min + index * wheelIncrement).toFixed(precision)));
+      values.push(Number((min + index * increment).toFixed(precision)));
     }
     if (value !== '' && !values.includes(value)) values.push(value);
     return values.sort((a, b) => a - b);
-  }, [max, min, precision, value, wheelIncrement]);
+  }, [increment, max, min, precision, value]);
   const initialValue = value === '' ? options[0] : value;
   const [draft, setDraft] = useState(initialValue);
   const [manualDraft, setManualDraft] = useState(String(initialValue));
