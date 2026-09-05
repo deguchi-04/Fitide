@@ -2,6 +2,7 @@ import type { Nutrients } from './fit-types';
 import { portfirFoods } from './portfir';
 import { tacoFoods } from './taco';
 import { japaneseFoods } from './japan-foods';
+import { cofidFoods } from './cofid';
 
 export interface FoodCatalogItem extends Nutrients {
   id: string;
@@ -49,6 +50,7 @@ const merged = [
   ...japaneseFoods.map((food) => food.id === 'jp-10151'
     ? { ...food, name: 'Salmão fumado (sockeye)' }
     : food),
+  ...cofidFoods,
 ];
 const seen = new Set<string>();
 

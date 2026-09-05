@@ -230,6 +230,7 @@ const foodSynonymGroups = [
   ['cream cheese', 'queijo creme', 'queijo cremoso'],
   ['salmao', 'salmon'],
   ['fumado', 'defumado', 'smoked'],
+  ['couscous', 'cuscuz', 'cuscus'],
 ];
 
 type QuantityMode = 'g' | 'unit' | 'ml';
@@ -1085,6 +1086,7 @@ function TodayPage({
   const [pastFastStart, setPastFastStart] = useState('20:00');
   const [pastFastEnd, setPastFastEnd] = useState('12:00');
   const [pastFastMessage, setPastFastMessage] = useState('');
+  const [pastFastEditing, setPastFastEditing] = useState(!recordedFast);
   const [fastStartDate, setFastStartDate] = useState(localDateKey());
   const [fastStartTime, setFastStartTime] = useState(localTimeValue());
   const [fastStartError, setFastStartError] = useState('');
@@ -1104,13 +1106,18 @@ function TodayPage({
         return `${item.fill} ${start}% ${macroPieCursor}%`;
       }).join(',')})`
     : undefined;
+  const recordedFastMinutes = recordedFast
+    ? Math.max(0, Math.round((new Date(recordedFast.end).getTime() - new Date(recordedFast.start).getTime()) / 60_000))
+    : 0;
+  const recordedFastDuration = `${Math.floor(recordedFastMinutes / 60)} h${recordedFastMinutes % 60 ? ` ${recordedFastMinutes % 60} min` : ''}`;
 
   useEffect(() => {
     if (isToday) return;
     setPastFastStart(recordedFast ? localTimeValue(new Date(recordedFast.start)) : '20:00');
     setPastFastEnd(recordedFast ? localTimeValue(new Date(recordedFast.end)) : '12:00');
+    setPastFastEditing(!recordedFast);
     setPastFastMessage('');
-  }, [date, isToday, recordedFast?.id]);
+  }, [date, isToday]);
 
   function startFastFromSelection() {
     const selectedStart = new Date(`${fastStartDate}T${fastStartTime}:00`);
@@ -1216,7 +1223,6 @@ function TodayPage({
           {state.meals.filter((meal) => meal.date === date).length ? (
             state.meals
               .filter((meal) => meal.date === date)
-              .slice(-3)
               .map((meal) => <button type="button" className="meal-edit-button" onClick={() => onEditMeal(meal)} key={meal.id}><MealRow meal={meal} /></button>)
           ) : (
             <EmptyState
@@ -1349,14 +1355,26 @@ function TodayPage({
                 </div>
               )
             ) : (
-              <div className="past-fast-form">
-                <label><span>Início</span><Input type="time" value={pastFastStart} onChange={(event) => setPastFastStart(event.target.value)} /></label>
-                <label><span>Fim</span><Input type="time" value={pastFastEnd} onChange={(event) => setPastFastEnd(event.target.value)} /></label>
+              <div className="past-fast-area">
+                {recordedFast && !pastFastEditing ? (
+                  <div className="past-fast-record">
+                    <span><small>Jejum registado</small><strong>{recordedFastDuration}</strong><em>{localTimeValue(new Date(recordedFast.start))} → {localTimeValue(new Date(recordedFast.end))}</em></span>
+                    <Button variant="outline" onClick={() => { setPastFastEditing(true); setPastFastMessage(''); }}>Editar</Button>
+                  </div>
+                ) : (
+                  <div className="past-fast-form">
+                    <label><span>Início</span><Input type="time" value={pastFastStart} onChange={(event) => setPastFastStart(event.target.value)} /></label>
+                    <label><span>Fim</span><Input type="time" value={pastFastEnd} onChange={(event) => setPastFastEnd(event.target.value)} /></label>
+                    <Button onClick={() => {
+                      const wasCorrection = Boolean(recordedFast);
+                      const saved = onPastFast(pastFastStart, pastFastEnd);
+                      setPastFastMessage(saved ? (wasCorrection ? 'Jejum corrigido com sucesso.' : 'Jejum registado com sucesso.') : 'Não foi possível guardar estas horas.');
+                      if (saved) setPastFastEditing(false);
+                    }}><Save /> Guardar {recordedFast ? 'correção' : 'jejum'}</Button>
+                    {recordedFast && <Button variant="ghost" onClick={() => { setPastFastEditing(false); setPastFastMessage(''); }}>Cancelar</Button>}
+                  </div>
+                )}
                 {pastFastMessage && <small className={pastFastMessage.startsWith('Não') ? 'fast-start-error' : 'fast-save-success'}>{pastFastMessage}</small>}
-                <Button onClick={() => {
-                  const saved = onPastFast(pastFastStart, pastFastEnd);
-                  setPastFastMessage(saved ? 'Jejum guardado neste dia.' : 'Não foi possível guardar estas horas.');
-                }}><Plus /> {recordedFast ? 'Corrigir jejum' : 'Registar jejum'}</Button>
               </div>
             )}
           </div>
@@ -1826,6 +1844,7 @@ function MealDialog({
                         type="button"
                         variant="ghost"
                         size="icon"
+                        className="assistant-delete"
                         aria-label={`Remover ${draft.original}`}
                         onClick={() => setAssistantDrafts((current) => current.filter((item) => item.id !== draft.id))}
                       >
