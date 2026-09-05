@@ -30,8 +30,26 @@ export function exerciseCaloriesPerWeek(profile: Profile, activities: Activity[]
   );
 }
 
+export function exerciseCaloriesForDay(profile: Profile, activities: Activity[], day: number) {
+  return activities
+    .filter((activity) => activity.days.includes(day))
+    .reduce((sum, activity) => {
+      const met = Math.min(20, Math.max(1, activity.met));
+      const minutes = Math.min(1440, Math.max(0, activity.minutes));
+      return sum + (met - 1) * 3.5 * profile.currentWeightKg / 200 * minutes;
+    }, 0);
+}
+
+export function sedentaryTdee(profile: Profile) {
+  return Math.round(bmr(profile) * 1.2);
+}
+
 export function tdee(profile: Profile, activities: Activity[]) {
-  return Math.round(bmr(profile) * 1.2 + exerciseCaloriesPerWeek(profile, activities) / 7);
+  return Math.round(sedentaryTdee(profile) + exerciseCaloriesPerWeek(profile, activities) / 7);
+}
+
+export function tdeeForDay(profile: Profile, activities: Activity[], day: number) {
+  return Math.round(sedentaryTdee(profile) + exerciseCaloriesForDay(profile, activities, day));
 }
 
 export function calorieDeficit(maintenance: number, calorieTarget: number) {

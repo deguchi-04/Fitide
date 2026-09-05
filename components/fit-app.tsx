@@ -70,11 +70,15 @@ import { Progress } from '@/components/ui/progress';
 import {
   bmr,
   calorieDeficit,
+  exerciseCaloriesForDay,
+  exerciseCaloriesPerWeek,
   fatEquivalentKg,
   roundNutrients,
+  sedentaryTdee,
   suggestedGoals,
   sumNutrients,
   tdee,
+  tdeeForDay,
   weeksToGoal,
 } from '@/lib/calculations';
 import { defaultState } from '@/lib/default-state';
@@ -387,8 +391,16 @@ function youtubeIdFromUrl(url: string) {
   return match?.[1];
 }
 
-function mergeState(saved: Partial<AppState>): AppState {
+function alignCalorieGoal(goals: AppState['goals'], profile: Profile, activities: Activity[]) {
+  if (goals.kind !== 'lose_fat') return goals;
   return {
+    ...goals,
+    calorieTarget: Math.max(1000, tdee(profile, activities) - goals.calorieDeficit),
+  };
+}
+
+function mergeState(saved: Partial<AppState>): AppState {
+  const merged: AppState = {
     ...defaultState,
     ...saved,
     profile: { ...defaultState.profile, ...saved.profile },
@@ -415,6 +427,8 @@ function mergeState(saved: Partial<AppState>): AppState {
     },
     healthSnapshots: saved.healthSnapshots ?? [],
   };
+  merged.goals = alignCalorieGoal(merged.goals, merged.profile, merged.activities);
+  return merged;
 }
 
 export default function FitApp() {
@@ -1058,8 +1072,13 @@ function TodayPage({
   const activePlan = state.workoutPlans
     .filter((plan) => !plan.days?.length || plan.days.includes(selectedDay))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'))[0];
-  const maintenance = tdee(state.profile, state.activities);
-  const deficit = calorieDeficit(maintenance, state.goals.calorieTarget);
+  const weeklyMaintenance = tdee(state.profile, state.activities);
+  const maintenance = tdeeForDay(state.profile, state.activities, selectedDay);
+  const baseMaintenance = sedentaryTdee(state.profile);
+  const exerciseToday = Math.round(exerciseCaloriesForDay(state.profile, state.activities, selectedDay));
+  const deficit = state.goals.kind === 'lose_fat'
+    ? state.goals.calorieDeficit
+    : calorieDeficit(weeklyMaintenance, state.goals.calorieTarget);
   const weeklyFat = fatEquivalentKg(deficit);
   const health = state.healthSnapshots.find((entry) => entry.date === date);
   const recordedFast = state.fasts.find((entry) => localDateKey(new Date(entry.start)) === date);
@@ -1154,9 +1173,9 @@ function TodayPage({
           tone="plum"
         />
         <Metric
-          label="Gasto diário estimado"
+          label="Gasto estimado neste dia"
           value={maintenance.toLocaleString('pt-PT')}
-          unit="kcal/dia"
+          unit={`kcal · base ${baseMaintenance.toLocaleString('pt-PT')} + treino ${exerciseToday.toLocaleString('pt-PT')} · média semanal ${weeklyMaintenance.toLocaleString('pt-PT')}`}
           icon={Flame}
           tone="orange"
         />
@@ -3411,10 +3430,14 @@ function SettingsPage({
   const [generating, setGenerating] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const draftMaintenance = tdee(profile, state.activities);
+  const draftBaseMaintenance = sedentaryTdee(profile);
+  const draftExerciseAverage = Math.round(exerciseCaloriesPerWeek(profile, state.activities) / 7);
   const draftEstimate = weeksToGoal(profile, goals.calorieTarget, draftMaintenance);
   function saveProfile(event: React.FormEvent) {
     event.preventDefault();
-    setState((current) => ({ ...current, profile, goals }));
+    const nextGoals = alignCalorieGoal(goals, profile, state.activities);
+    setGoals(nextGoals);
+    setState((current) => ({ ...current, profile, goals: nextGoals }));
   }
   function recalculate() {
     const next = suggestedGoals(profile, state.activities, goals.kind);
@@ -3430,10 +3453,16 @@ function SettingsPage({
       minutes,
       met,
     };
-    setState((current) => ({
-      ...current,
-      activities: [...current.activities, activity],
-    }));
+    const nextActivities = [...state.activities, activity];
+    const nextGoals = alignCalorieGoal(goals, profile, nextActivities);
+    setGoals(nextGoals);
+    setState((current) => ({ ...current, activities: nextActivities, goals: nextGoals }));
+  }
+  function removeActivity(id: string) {
+    const nextActivities = state.activities.filter((activity) => activity.id !== id);
+    const nextGoals = alignCalorieGoal(goals, profile, nextActivities);
+    setGoals(nextGoals);
+    setState((current) => ({ ...current, activities: nextActivities, goals: nextGoals }));
   }
   async function generateWorkout() {
     if (!workoutDays.length) return;
@@ -3489,9 +3518,9 @@ function SettingsPage({
           <small>Mifflin–St Jeor</small>
         </div>
         <div>
-          <span>Gasto diário</span>
+          <span>Média diária semanal</span>
           <strong>{draftMaintenance} kcal</strong>
-          <small>base + atividades MET</small>
+          <small>base {draftBaseMaintenance} + treino médio {draftExerciseAverage}</small>
         </div>
         <div>
           <span>Objetivo</span>
@@ -3741,14 +3770,7 @@ function SettingsPage({
                     variant="ghost"
                     size="icon"
                     aria-label={`Apagar atividade ${activity.name}`}
-                    onClick={() =>
-                      setState((current) => ({
-                        ...current,
-                        activities: current.activities.filter(
-                          (item) => item.id !== activity.id,
-                        ),
-                      }))
-                    }
+                    onClick={() => removeActivity(activity.id)}
                   >
                     <Trash2 />
                   </Button>
@@ -3773,7 +3795,7 @@ function SettingsPage({
                 <Field label="Minutos">
                   <NumberInput value={minutes} min={5} max={240} step="5" onChange={setMinutes} />
                 </Field>
-                <Field label={<span className="label-help">Intensidade MET <span className="help-tip" tabIndex={0}><CircleHelp /><span role="tooltip">MET compara o gasto da atividade com o repouso: 1 MET ≈ estar sentado; quanto maior, mais intensa a atividade.</span></span></span>}>
+                <Field label={<span className="label-help">Intensidade MET <span className="help-tip" tabIndex={0}><CircleHelp /><span role="tooltip">Escala MET: 1 = repouso sentado; 2–2,9 = leve; 3–5,9 = moderado; 6–9,9 = vigoroso; 10+ = muito vigoroso. Uma atividade de 10 MET usa aproximadamente 10× a energia do repouso durante o tempo ativo.</span></span></span>}>
                   <NumberInput value={met} min={1} max={18} step="0.5" onChange={setMet} />
                 </Field>
               </div>
