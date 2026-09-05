@@ -323,6 +323,29 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 .chart-card .recharts-surface,
 .chart-card .recharts-layer { outline: none !important; -webkit-tap-highlight-color: transparent; }
 
+/* Recharts makes its SVG keyboard-focusable. Keep focus on the active day only,
+   without a browser-colored frame around the complete chart. */
+.chart-card,
+.chart-card [data-slot='chart'],
+.chart-card [data-slot='chart']:focus,
+.chart-card [data-slot='chart']:focus-visible,
+.chart-card .recharts-wrapper,
+.chart-card .recharts-wrapper:focus,
+.chart-card .recharts-wrapper:focus-visible,
+.chart-card .recharts-surface,
+.chart-card .recharts-surface:focus,
+.chart-card .recharts-surface:focus-visible,
+.chart-card .recharts-layer:focus,
+.chart-card .recharts-layer:focus-visible,
+.chart-card svg *:focus,
+.chart-card svg *:focus-visible {
+  outline: 0 !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+.chart-card [data-slot='chart'] { user-select: none; }
+
 /* Keep compact quantities such as “100 g” intact even in the narrow mobile column. */
 .ingredient-input .number-picker-trigger > span { display: block; width: max-content; max-width: none; white-space: nowrap !important; }
 

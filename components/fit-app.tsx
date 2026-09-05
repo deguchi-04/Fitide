@@ -50,6 +50,7 @@ import {
   PolarRadiusAxis,
   Radar,
   RadarChart,
+  ReferenceLine,
 } from 'recharts';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -3139,6 +3140,12 @@ function ProgressPage({
         month: 'short',
       }),
     }));
+  const weightChartDomain: [number, number] = weightData.length
+    ? [
+        Math.floor(Math.min(state.profile.targetWeightKg, ...weightData.map((entry) => entry.weightKg)) - 2),
+        Math.ceil(Math.max(state.profile.targetWeightKg, ...weightData.map((entry) => entry.weightKg)) + 2),
+      ]
+    : [state.profile.targetWeightKg - 2, state.profile.targetWeightKg + 2];
   const recentDates = Array.from({ length: range === 'week' ? 7 : 30 }, (_, index) => {
     const date = new Date();
     date.setDate(date.getDate() - ((range === 'week' ? 6 : 29) - index));
@@ -3176,6 +3183,22 @@ function ProgressPage({
         };
       })
     : dailyHistory;
+  const goalPeriodMultiplier = range === 'year' ? 30.4 : 1;
+  const proteinGoal = Math.round(state.goals.proteinG * goalPeriodMultiplier);
+  const carbsGoal = Math.round(state.goals.carbsG * goalPeriodMultiplier);
+  const fatGoal = Math.round(state.goals.fatG * goalPeriodMultiplier);
+  const waterGoal = Math.round(state.goals.waterLiters * goalPeriodMultiplier * 10) / 10;
+  const macroChartMaximum = Math.ceil(
+    Math.max(
+      proteinGoal,
+      carbsGoal,
+      fatGoal,
+      ...historyData.flatMap((entry) => [entry.protein, entry.carbs, entry.fat]),
+    ) * 1.12,
+  );
+  const waterChartMaximum = Math.ceil(
+    Math.max(waterGoal, ...historyData.map((entry) => entry.water)) * 1.12 * 10,
+  ) / 10;
   const periodLabel = range === 'week' ? 'semana' : range === 'month' ? 'mês' : 'ano';
   function addWeight(event: React.FormEvent) {
     event.preventDefault();
@@ -3269,11 +3292,24 @@ function ProgressPage({
                   <CartesianGrid vertical={false} />
                   <XAxis dataKey="label" tickLine={false} axisLine={false} />
                   <YAxis
-                    domain={['dataMin - 2', 'dataMax + 2']}
+                    domain={weightChartDomain}
                     tickLine={false}
                     axisLine={false}
                   />
                   <ChartTooltip content={<ChartTooltipContent />} />
+                  <ReferenceLine
+                    y={state.profile.targetWeightKg}
+                    stroke="#e5483f"
+                    strokeWidth={2}
+                    strokeDasharray="7 6"
+                    label={{
+                      value: `Objetivo ${state.profile.targetWeightKg.toFixed(1)} kg`,
+                      position: 'insideTopRight',
+                      fill: '#e5483f',
+                      fontSize: 11,
+                      fontWeight: 750,
+                    }}
+                  />
                   <Area
                     dataKey="weightKg"
                     type="monotone"
@@ -3348,8 +3384,11 @@ function ProgressPage({
               <BarChart data={historyData}>
                 <CartesianGrid vertical={false} />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} />
+                <YAxis domain={[0, macroChartMaximum]} tickLine={false} axisLine={false} />
                 <ChartTooltip content={<ChartTooltipContent />} />
+                <ReferenceLine y={proteinGoal} stroke="#e5483f" strokeWidth={1.5} strokeDasharray="7 6" label={{ value: `Meta P ${proteinGoal} g`, position: 'insideTopRight', fill: '#e5483f', fontSize: 10 }} />
+                <ReferenceLine y={carbsGoal} stroke="#e5483f" strokeWidth={1.5} strokeDasharray="7 6" label={{ value: `Meta H ${carbsGoal} g`, position: 'insideRight', fill: '#e5483f', fontSize: 10 }} />
+                <ReferenceLine y={fatGoal} stroke="#e5483f" strokeWidth={1.5} strokeDasharray="7 6" label={{ value: `Meta G ${fatGoal} g`, position: 'insideBottomRight', fill: '#e5483f', fontSize: 10 }} />
                 <Bar
                   dataKey="protein"
                   fill="var(--color-protein)"
@@ -3381,8 +3420,15 @@ function ProgressPage({
               <BarChart data={historyData}>
                 <CartesianGrid vertical={false} />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} />
+                <YAxis domain={[0, waterChartMaximum]} tickLine={false} axisLine={false} />
                 <ChartTooltip content={<ChartTooltipContent />} />
+                <ReferenceLine
+                  y={waterGoal}
+                  stroke="#e5483f"
+                  strokeWidth={2}
+                  strokeDasharray="7 6"
+                  label={{ value: `Meta ${waterGoal.toLocaleString('pt-PT')} L`, position: 'insideTopRight', fill: '#e5483f', fontSize: 10 }}
+                />
                 <Bar
                   dataKey="water"
                   fill="var(--color-water)"
