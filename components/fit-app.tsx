@@ -1288,13 +1288,15 @@ function TodayPage({
           <CardTitle>Água & jejum</CardTitle>
         </CardHeader>
         <CardContent className="habit-grid">
-          <div>
+          <div className="habit-tile water-habit">
             <div className="habit-heading">
-              <Waves />
-              <span>
+              <span className="habit-icon"><Waves /></span>
+              <span className="habit-copy">
+                <small className="habit-label">Água diária</small>
                 <strong>{formatLiters(water)} L</strong>
                 <small>de {state.goals.waterLiters} L</small>
               </span>
+              <span className="habit-badge">{Math.min(100, Math.round((water / state.goals.waterLiters) * 100))}%</span>
             </div>
             <Progress value={(water / state.goals.waterLiters) * 100} />
             <div className="water-custom">
@@ -1314,10 +1316,11 @@ function TodayPage({
               </div>
             </div>
           </div>
-          <div>
+          <div className="habit-tile fast-habit">
             <div className="habit-heading">
-              <TimerReset />
-              <span>
+              <span className="habit-icon"><TimerReset /></span>
+              <span className="habit-copy">
+                <small className="habit-label">Jejum intermitente</small>
                 <strong>
                   {state.activeFastStart
                     ? formatDuration(fastSeconds)
@@ -1328,6 +1331,9 @@ function TodayPage({
                     ? `desde ${new Date(state.activeFastStart).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
                     : 'meta configurada'}
                 </small>
+              </span>
+              <span className={`habit-badge ${state.activeFastStart ? 'active' : ''}`}>
+                {state.activeFastStart ? 'A decorrer' : `${state.goals.fastingHours} h`}
               </span>
             </div>
             {isToday ? (
@@ -1530,6 +1536,7 @@ function MealDialog({
   const [assistantText, setAssistantText] = useState('');
   const [assistantDrafts, setAssistantDrafts] = useState<MealAssistantDraft[]>([]);
   const [assistantMessage, setAssistantMessage] = useState('');
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [manual, setManual] = useState<Record<keyof Nutrients, number | ''>>({
     calories: '',
     protein: '',
@@ -1761,6 +1768,7 @@ function MealDialog({
     setAssistantText('');
     setAssistantDrafts([]);
     setAssistantMessage(`${recognized.length} ingredientes adicionados à refeição.`);
+    setAssistantOpen(false);
   }
 
   return (
@@ -1781,31 +1789,39 @@ function MealDialog({
           </Button>
         </header>
         <div className="dialog-scroll">
-          <section className="meal-assistant" aria-labelledby="meal-assistant-title">
-            <div className="meal-assistant-heading">
+          <section className={`meal-assistant ${assistantOpen ? 'is-open' : 'is-collapsed'}`} aria-labelledby="meal-assistant-title">
+            <button
+              type="button"
+              className="meal-assistant-heading"
+              aria-expanded={assistantOpen}
+              aria-controls="meal-assistant-body"
+              onClick={() => setAssistantOpen((current) => !current)}
+            >
               <span><Sparkles /></span>
               <div>
                 <strong id="meal-assistant-title">Montar refeição com o assistente</strong>
-                <small>Descreve tudo de uma vez; revê as correspondências antes de adicionar.</small>
+                <small>{assistantOpen ? 'Descreve tudo de uma vez e revê as correspondências.' : assistantMessage || 'Toca para descrever o prato completo.'}</small>
               </div>
-            </div>
-            <textarea
-              value={assistantText}
-              rows={3}
-              placeholder="Ex.: 1 maçã, 50 g de lentilhas, 2 wraps e 250 ml de leite"
-              onChange={(event) => {
-                setAssistantText(event.target.value);
-                setAssistantMessage('');
-              }}
-            />
-            <div className="meal-assistant-actions">
-              <small>{assistantMessage || 'Também entende kg, litros, unidades e quantidades por extenso.'}</small>
-              <Button type="button" disabled={!assistantText.trim()} onClick={analyzeMealDescription}>
-                <Sparkles /> Interpretar prato
-              </Button>
-            </div>
-            {assistantDrafts.length > 0 && (
-              <div className="meal-assistant-results">
+              <ChevronDown className={assistantOpen ? 'rotated' : ''} />
+            </button>
+            {assistantOpen && <div id="meal-assistant-body" className="meal-assistant-body">
+              <textarea
+                value={assistantText}
+                rows={3}
+                placeholder="Ex.: 1 maçã, 50 g de lentilhas, 2 wraps e 250 ml de leite"
+                onChange={(event) => {
+                  setAssistantText(event.target.value);
+                  setAssistantMessage('');
+                }}
+              />
+              <div className="meal-assistant-actions">
+                <small>{assistantMessage || 'Também entende kg, litros, unidades e quantidades por extenso.'}</small>
+                <Button type="button" disabled={!assistantText.trim()} onClick={analyzeMealDescription}>
+                  <Sparkles /> Interpretar prato
+                </Button>
+              </div>
+              {assistantDrafts.length > 0 && (
+                <div className="meal-assistant-results">
                 {assistantDrafts.map((draft) => {
                   const food = availableFoods.find((item) => item.id === draft.foodId);
                   const convertedGrams = assistantDraftGrams(draft);
@@ -1856,8 +1872,9 @@ function MealDialog({
                 <Button type="button" disabled={!assistantDrafts.some((draft) => draft.foodId)} onClick={addAssistantIngredients}>
                   <Plus /> Adicionar ingredientes reconhecidos
                 </Button>
-              </div>
-            )}
+                </div>
+              )}
+            </div>}
           </section>
           <div className="form-grid two">
             <Field label="Tipo de refeição">
