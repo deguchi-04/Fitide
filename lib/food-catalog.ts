@@ -46,7 +46,9 @@ const merged = [
   },
   ...portfirFoods.map((food) => ({ ...food, id: `pt-${food.id}` })),
   ...tacoFoods,
-  ...japaneseFoods,
+  ...japaneseFoods.map((food) => food.id === 'jp-10151'
+    ? { ...food, name: 'Salmão fumado (sockeye)' }
+    : food),
 ];
 const seen = new Set<string>();
 

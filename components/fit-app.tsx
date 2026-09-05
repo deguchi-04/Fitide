@@ -43,8 +43,6 @@ import {
   CartesianGrid,
   XAxis,
   YAxis,
-  Pie,
-  PieChart,
   PolarAngleAxis,
   PolarGrid,
   PolarRadiusAxis,
@@ -225,6 +223,9 @@ const foodSynonymGroups = [
   ['konbu', 'kombu'],
   ['proteina de soro', 'whey protein', 'whey'],
   ['wrap', 'wraps', 'wrpas', 'tortilha', 'tortilla'],
+  ['cream cheese', 'queijo creme', 'queijo cremoso'],
+  ['salmao', 'salmon'],
+  ['fumado', 'defumado', 'smoked'],
 ];
 
 type QuantityMode = 'g' | 'unit' | 'ml';
@@ -280,9 +281,11 @@ function foodQueryVariants(value: string) {
   const clean = normalizeText(value);
   const variants = new Set([clean]);
   for (const group of foodSynonymGroups) {
-    for (const term of group) {
-      if (!clean.includes(term)) continue;
-      for (const alternative of group) variants.add(clean.replace(term, alternative));
+    for (const variant of [...variants]) {
+      for (const term of group) {
+        if (!variant.includes(term)) continue;
+        for (const alternative of group) variants.add(variant.replace(term, alternative));
+      }
     }
   }
   return [...variants];
@@ -343,6 +346,10 @@ function FitideLogo() {
 function localDateKey(date = new Date()) {
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function localTimeValue(date = new Date()) {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
 function uid() {
@@ -422,6 +429,10 @@ export default function FitApp() {
   const [editingMeal, setEditingMeal] = useState<Meal | null>(null);
   const [now, setNow] = useState(Date.now());
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  const swipeAxis = useRef<'x' | 'y' | null>(null);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [swipeNeighbor, setSwipeNeighbor] = useState<Page | null>(null);
+  const [swipeAnimating, setSwipeAnimating] = useState(false);
 
   useEffect(() => {
     fetch('/api/state')
@@ -510,7 +521,7 @@ export default function FitApp() {
     });
   }
 
-  function toggleFast() {
+  function toggleFast(startAt?: string) {
     if (state.activeFastStart) {
       patchState({
         fasts: [
@@ -524,15 +535,24 @@ export default function FitApp() {
         activeFastStart: undefined,
       });
     } else {
-      patchState({ activeFastStart: new Date().toISOString() });
+      patchState({ activeFastStart: startAt ?? new Date().toISOString() });
     }
   }
 
   function addPastFast(startTime: string, endTime: string) {
+    if (!startTime || !endTime) return false;
     const start = new Date(`${selectedDate}T${startTime}:00`);
     const end = new Date(`${selectedDate}T${endTime}:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start.getTime() > Date.now()) return false;
     if (end <= start) end.setDate(end.getDate() + 1);
-    patchState({ fasts: [...state.fasts, { id: uid(), start: start.toISOString(), end: end.toISOString() }] });
+    setState((current) => ({
+      ...current,
+      fasts: [
+        ...current.fasts.filter((entry) => localDateKey(new Date(entry.start)) !== selectedDate),
+        { id: uid(), start: start.toISOString(), end: end.toISOString() },
+      ],
+    }));
+    return true;
   }
 
   async function resetProfile() {
@@ -550,19 +570,69 @@ export default function FitApp() {
     });
   }
 
+  function resetSwipe() {
+    swipeStart.current = null;
+    swipeAxis.current = null;
+    setSwipeAnimating(false);
+    setSwipeOffset(0);
+    setSwipeNeighbor(null);
+  }
+
+  function handleSwipeStart(event: React.TouchEvent<HTMLElement>) {
+    const target = event.target as HTMLElement;
+    if (event.touches.length !== 1 || target.closest('input, textarea, select, [role="dialog"], .number-wheel-card, .chart-range')) {
+      swipeStart.current = null;
+      return;
+    }
+    swipeStart.current = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+    swipeAxis.current = null;
+    setSwipeAnimating(false);
+    setSwipeOffset(0);
+    setSwipeNeighbor(null);
+  }
+
+  function handleSwipeMove(event: React.TouchEvent<HTMLElement>) {
+    const start = swipeStart.current;
+    if (!start || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (!swipeAxis.current) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 9) return;
+      swipeAxis.current = Math.abs(dx) > Math.abs(dy) * 1.15 ? 'x' : 'y';
+    }
+    if (swipeAxis.current !== 'x') return;
+    event.preventDefault();
+    const index = pageOrder.indexOf(page);
+    const neighborIndex = dx < 0 ? index + 1 : index - 1;
+    if (neighborIndex < 0 || neighborIndex >= pageOrder.length) {
+      setSwipeNeighbor(null);
+      setSwipeOffset(dx * 0.18);
+      return;
+    }
+    setSwipeNeighbor(pageOrder[neighborIndex]);
+    setSwipeOffset(dx);
+  }
+
   function handleSwipeEnd(event: React.TouchEvent<HTMLElement>) {
     const start = swipeStart.current;
     swipeStart.current = null;
-    if (!start || event.changedTouches.length !== 1) return;
-    const target = event.target as HTMLElement;
-    if (target.closest('input, textarea, select, [role="dialog"], .number-wheel-card, .chart-range')) return;
+    if (!start || event.changedTouches.length !== 1 || swipeAxis.current !== 'x') {
+      resetSwipe();
+      return;
+    }
     const touch = event.changedTouches[0];
     const dx = touch.clientX - start.x;
-    const dy = touch.clientY - start.y;
-    if (Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.35) return;
     const index = pageOrder.indexOf(page);
     const nextIndex = dx < 0 ? Math.min(pageOrder.length - 1, index + 1) : Math.max(0, index - 1);
-    if (nextIndex !== index) setPage(pageOrder[nextIndex]);
+    const nextPage = pageOrder[nextIndex];
+    const shouldChange = nextIndex !== index && Math.abs(dx) >= Math.min(92, event.currentTarget.clientWidth * 0.22);
+    setSwipeAnimating(true);
+    setSwipeOffset(shouldChange ? (dx < 0 ? -event.currentTarget.clientWidth : event.currentTarget.clientWidth) : 0);
+    window.setTimeout(() => {
+      if (shouldChange) setPage(nextPage);
+      resetSwipe();
+    }, 240);
   }
 
   if (!loaded) {
@@ -580,6 +650,48 @@ export default function FitApp() {
 
   if (!state.profile.configured) {
     return <Onboarding state={state} onComplete={setState} />;
+  }
+
+  function renderPage(targetPage: Page) {
+    if (targetPage === 'today') return (
+      <TodayPage
+        state={state}
+        date={selectedDate}
+        consumed={consumed}
+        water={water}
+        remaining={remaining}
+        fastSeconds={fastSeconds}
+        onWater={updateWater}
+        onFast={toggleFast}
+        onPastFast={addPastFast}
+        onAddMeal={() => { setEditingMeal(null); setMealOpen(true); }}
+        onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
+        onGo={setPage}
+      />
+    );
+    if (targetPage === 'meals') return (
+      <MealsPage
+        meals={dayMeals}
+        consumed={consumed}
+        date={selectedDate}
+        onAdd={() => { setEditingMeal(null); setMealOpen(true); }}
+        onEdit={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
+        onDelete={(id) => patchState({ meals: state.meals.filter((meal) => meal.id !== id) })}
+      />
+    );
+    if (targetPage === 'workout') return <WorkoutPage state={state} setState={setState} date={selectedDate} onGoJudo={() => setPage('judo')} />;
+    if (targetPage === 'judo') return <JudoPage state={state} setState={setState} date={selectedDate} onBack={() => setPage('workout')} />;
+    if (targetPage === 'calendar') return (
+      <CalendarPage
+        state={state}
+        selectedDate={selectedDate}
+        setSelectedDate={setSelectedDate}
+        onOpenDay={() => setPage('today')}
+        onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
+      />
+    );
+    if (targetPage === 'progress') return <ProgressPage state={state} setState={setState} />;
+    return <SettingsPage state={state} setState={setState} onReset={resetProfile} />;
   }
 
   return (
@@ -612,10 +724,10 @@ export default function FitApp() {
 
       <section
         className="main-surface"
-        onTouchStart={(event) => {
-          if (event.touches.length === 1) swipeStart.current = { x: event.touches[0].clientX, y: event.touches[0].clientY };
-        }}
+        onTouchStart={handleSwipeStart}
+        onTouchMove={handleSwipeMove}
         onTouchEnd={handleSwipeEnd}
+        onTouchCancel={resetSwipe}
       >
         <header className="topbar">
           <div>
@@ -656,61 +768,25 @@ export default function FitApp() {
           </div>
         </header>
 
-        {page === 'today' && (
-          <TodayPage
-            state={state}
-            date={selectedDate}
-            consumed={consumed}
-            water={water}
-            remaining={remaining}
-            fastSeconds={fastSeconds}
-            onWater={updateWater}
-            onFast={toggleFast}
-            onPastFast={addPastFast}
-            onAddMeal={() => { setEditingMeal(null); setMealOpen(true); }}
-            onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
-            onGo={setPage}
-          />
-        )}
-        {page === 'meals' && (
-          <MealsPage
-            meals={dayMeals}
-            consumed={consumed}
-            date={selectedDate}
-            onAdd={() => { setEditingMeal(null); setMealOpen(true); }}
-            onEdit={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
-            onDelete={(id) =>
-              patchState({
-                meals: state.meals.filter((meal) => meal.id !== id),
-              })
-            }
-          />
-        )}
-        {page === 'workout' && (
-          <WorkoutPage state={state} setState={setState} date={selectedDate} onGoJudo={() => setPage('judo')} />
-        )}
-        {page === 'judo' && (
-          <JudoPage state={state} setState={setState} date={selectedDate} onBack={() => setPage('workout')} />
-        )}
-        {page === 'calendar' && (
-          <CalendarPage
-            state={state}
-            selectedDate={selectedDate}
-            setSelectedDate={setSelectedDate}
-            onOpenDay={() => setPage('today')}
-            onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
-          />
-        )}
-        {page === 'progress' && (
-          <ProgressPage state={state} setState={setState} />
-        )}
-        {page === 'settings' && (
-          <SettingsPage
-            state={state}
-            setState={setState}
-            onReset={resetProfile}
-          />
-        )}
+        <div className="page-swipe-layer">
+          <div
+            className={`page-swipe-current ${swipeAnimating ? 'animating' : ''}`}
+            style={{ transform: `translate3d(${swipeOffset}px,0,0)` }}
+          >
+            {renderPage(page)}
+          </div>
+          {swipeNeighbor && (
+            <div
+              className={`page-swipe-neighbor ${swipeAnimating ? 'animating' : ''}`}
+              aria-hidden="true"
+              style={{
+                transform: `translate3d(calc(${swipeNeighbor === pageOrder[pageOrder.indexOf(page) + 1] ? '100%' : '-100%'} + ${swipeOffset}px),0,0)`,
+              }}
+            >
+              {renderPage(swipeNeighbor)}
+            </div>
+          )}
+        </div>
       </section>
 
       <nav className="mobile-nav" aria-label="Navegação móvel">
@@ -967,8 +1043,8 @@ function TodayPage({
   remaining: number;
   fastSeconds: number;
   onWater: (delta: number) => void;
-  onFast: () => void;
-  onPastFast: (startTime: string, endTime: string) => void;
+  onFast: (startAt?: string) => void;
+  onPastFast: (startTime: string, endTime: string) => boolean;
   onAddMeal: () => void;
   onEditMeal: (meal: Meal) => void;
   onGo: (page: Page) => void;
@@ -986,8 +1062,13 @@ function TodayPage({
   const deficit = calorieDeficit(maintenance, state.goals.calorieTarget);
   const weeklyFat = fatEquivalentKg(deficit);
   const health = state.healthSnapshots.find((entry) => entry.date === date);
+  const recordedFast = state.fasts.find((entry) => localDateKey(new Date(entry.start)) === date);
   const [pastFastStart, setPastFastStart] = useState('20:00');
   const [pastFastEnd, setPastFastEnd] = useState('12:00');
+  const [pastFastMessage, setPastFastMessage] = useState('');
+  const [fastStartDate, setFastStartDate] = useState(localDateKey());
+  const [fastStartTime, setFastStartTime] = useState(localTimeValue());
+  const [fastStartError, setFastStartError] = useState('');
   const [waterMl, setWaterMl] = useState(250);
   const macroPie = [
     { name: 'Proteína', value: Math.round(consumed.protein * 4), fill: '#087fb7' },
@@ -995,6 +1076,36 @@ function TodayPage({
     { name: 'Gordura', value: Math.round(consumed.fat * 9), fill: '#13805f' },
     { name: 'Fibra', value: Math.round(consumed.fiber * 2), fill: '#35a6d1' },
   ].filter((item) => item.value > 0);
+  const macroPieTotal = macroPie.reduce((total, item) => total + item.value, 0);
+  let macroPieCursor = 0;
+  const macroPieBackground = macroPieTotal
+    ? `conic-gradient(${macroPie.map((item) => {
+        const start = macroPieCursor;
+        macroPieCursor += item.value / macroPieTotal * 100;
+        return `${item.fill} ${start}% ${macroPieCursor}%`;
+      }).join(',')})`
+    : undefined;
+
+  useEffect(() => {
+    if (isToday) return;
+    setPastFastStart(recordedFast ? localTimeValue(new Date(recordedFast.start)) : '20:00');
+    setPastFastEnd(recordedFast ? localTimeValue(new Date(recordedFast.end)) : '12:00');
+    setPastFastMessage('');
+  }, [date, isToday, recordedFast?.id]);
+
+  function startFastFromSelection() {
+    const selectedStart = new Date(`${fastStartDate}T${fastStartTime}:00`);
+    if (Number.isNaN(selectedStart.getTime())) {
+      setFastStartError('Escolhe uma data e uma hora válidas.');
+      return;
+    }
+    if (selectedStart.getTime() > Date.now()) {
+      setFastStartError('O início do jejum não pode estar no futuro.');
+      return;
+    }
+    setFastStartError('');
+    onFast(selectedStart.toISOString());
+  }
   return (
     <div className="dashboard-grid page-enter">
       <section className="hero-card">
@@ -1189,21 +1300,44 @@ function TodayPage({
                 </strong>
                 <small>
                   {state.activeFastStart
-                    ? 'jejum em curso'
+                    ? `desde ${new Date(state.activeFastStart).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
                     : 'meta configurada'}
                 </small>
               </span>
             </div>
             {isToday ? (
-              <Button className="wide-button" variant={state.activeFastStart ? 'outline' : 'default'} onClick={onFast}>
-                {state.activeFastStart ? <CirclePause /> : <CirclePlay />}
-                {state.activeFastStart ? 'Terminar jejum' : 'Começar jejum'}
-              </Button>
+              state.activeFastStart ? (
+                <Button className="wide-button" variant="outline" onClick={() => onFast()}>
+                  <CirclePause /> Terminar jejum
+                </Button>
+              ) : (
+                <div className="fast-start-form">
+                  <div className="fast-start-fields">
+                    <label>
+                      <span>Data de início</span>
+                      <Input type="date" max={localDateKey()} value={fastStartDate} onChange={(event) => { setFastStartDate(event.target.value); setFastStartError(''); }} />
+                    </label>
+                    <label>
+                      <span>Hora de início</span>
+                      <Input type="time" value={fastStartTime} onChange={(event) => { setFastStartTime(event.target.value); setFastStartError(''); }} />
+                    </label>
+                  </div>
+                  {fastStartError && <small className="fast-start-error">{fastStartError}</small>}
+                  <div className="fast-start-actions">
+                    <Button variant="outline" onClick={() => onFast()}><CirclePlay /> Agora</Button>
+                    <Button onClick={startFastFromSelection}><TimerReset /> Usar esta hora</Button>
+                  </div>
+                </div>
+              )
             ) : (
               <div className="past-fast-form">
                 <label><span>Início</span><Input type="time" value={pastFastStart} onChange={(event) => setPastFastStart(event.target.value)} /></label>
                 <label><span>Fim</span><Input type="time" value={pastFastEnd} onChange={(event) => setPastFastEnd(event.target.value)} /></label>
-                <Button onClick={() => onPastFast(pastFastStart, pastFastEnd)}><Plus /> Registar jejum</Button>
+                {pastFastMessage && <small className={pastFastMessage.startsWith('Não') ? 'fast-start-error' : 'fast-save-success'}>{pastFastMessage}</small>}
+                <Button onClick={() => {
+                  const saved = onPastFast(pastFastStart, pastFastEnd);
+                  setPastFastMessage(saved ? 'Jejum guardado neste dia.' : 'Não foi possível guardar estas horas.');
+                }}><Plus /> {recordedFast ? 'Corrigir jejum' : 'Registar jejum'}</Button>
               </div>
             )}
           </div>
@@ -1223,9 +1357,9 @@ function TodayPage({
           <div className="macro-pie">
             {macroPie.length ? (
               <>
-                <ChartContainer className="macro-pie-chart" config={{ protein: { label: 'Proteína', color: '#168fbd' } }}>
-                  <PieChart><ChartTooltip content={<ChartTooltipContent nameKey="name" />} /><Pie data={macroPie} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={52} outerRadius={82} paddingAngle={3} /></PieChart>
-                </ChartContainer>
+                <div className="macro-pie-chart" style={{ background: macroPieBackground }} role="img" aria-label="Distribuição dos macronutrientes">
+                  <span><strong>{Math.round(consumed.calories)}</strong><small>kcal</small></span>
+                </div>
                 <div className="macro-pie-legend" aria-label="Legenda dos macronutrientes">
                   {macroPie.map((item) => <span key={item.name}><i style={{ backgroundColor: item.fill }} />{item.name}</span>)}
                 </div>
@@ -2692,21 +2826,21 @@ function CalendarPage({
     (entry) => entry.date === selectedDate,
   );
   const fast = state.fasts.find(
-    (entry) => localDateKey(new Date(entry.end)) === selectedDate,
+    (entry) => localDateKey(new Date(entry.start)) === selectedDate,
   );
   const todayKey = localDateKey();
   const firstRecordDate = [
     ...state.meals.map((entry) => entry.date),
     ...state.weights.map((entry) => entry.date),
     ...state.water.map((entry) => entry.date),
-    ...state.fasts.map((entry) => localDateKey(new Date(entry.end))),
+    ...state.fasts.map((entry) => localDateKey(new Date(entry.start))),
     ...state.workoutSessions.map((entry) => entry.date),
     ...state.judoPractices.map((entry) => entry.date),
     ...state.healthSnapshots.map((entry) => entry.date),
   ].sort()[0];
   const fastingMetForDate = (key: string) => state.fasts.some((entry) => {
     const durationHours = (new Date(entry.end).getTime() - new Date(entry.start).getTime()) / 3_600_000;
-    return localDateKey(new Date(entry.end)) === key && durationHours >= state.goals.fastingHours;
+    return localDateKey(new Date(entry.start)) === key && durationHours >= state.goals.fastingHours;
   });
   return (
     <div className="content-page page-enter">
@@ -3939,6 +4073,12 @@ function NumberInput({
     return Number(Math.min(effectiveMax, Math.max(effectiveMin, parsed)).toFixed(precision));
   }
 
+  function commitDraftAndClose() {
+    onChange(parsedManualValue());
+    if (unitOptions?.length) onUnitChange?.(draftUnit);
+    setOpen(false);
+  }
+
   return (
     <>
       <button
@@ -3966,7 +4106,7 @@ function NumberInput({
           className="number-wheel-backdrop"
           role="presentation"
           onClick={(event) => {
-            if (event.target === event.currentTarget) setOpen(false);
+            if (event.target === event.currentTarget) commitDraftAndClose();
           }}
         >
           <section className="number-wheel-card" role="dialog" aria-modal="true" aria-label={ariaLabel ?? 'Selecionar valor'}>
@@ -4025,11 +4165,19 @@ function NumberInput({
                 autoComplete="off"
                 aria-label={`${ariaLabel ?? 'Valor'} introduzido manualmente`}
                 onChange={(event) => setManualDraft(event.target.value.replace(/[^0-9,.-]/g, ''))}
+                onBlur={() => {
+                  const parsed = parsedManualValue();
+                  setDraft(parsed);
+                  setManualDraft(formatOption(parsed));
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') commitDraftAndClose();
+                }}
               />
             </div>
             <footer>
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
-              <Button type="button" onClick={() => { onChange(parsedManualValue()); if (unitOptions?.length) onUnitChange?.(draftUnit); setOpen(false); }}>Confirmar</Button>
+              <Button type="button" onClick={commitDraftAndClose}>Confirmar</Button>
             </footer>
           </section>
         </div></OverlayPortal>
