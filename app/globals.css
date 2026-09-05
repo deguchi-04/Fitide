@@ -317,3 +317,11 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
   .meal-assistant-heading > div { min-width: 0; }
   .meal-assistant-heading small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
+
+/* Charts should not acquire a browser/touch selection ring. */
+.chart-card .recharts-wrapper,
+.chart-card .recharts-surface,
+.chart-card .recharts-layer { outline: none !important; -webkit-tap-highlight-color: transparent; }
+
+/* Keep compact quantities such as “100 g” intact even in the narrow mobile column. */
+.ingredient-input .number-picker-trigger > span { display: block; width: max-content; max-width: none; white-space: nowrap !important; }

@@ -1580,6 +1580,39 @@ function MealDialog({
         : grams
     : grams;
 
+  function catalogAmountToGrams(food: FoodCatalogItem, amount: number, amountUnit: QuantityMode) {
+    if (amountUnit === 'unit') return amount * averageUnitGrams(food.name);
+    if (amountUnit === 'ml') return amount * liquidDensity(food.name);
+    return amount;
+  }
+
+  function addCatalogIngredient(food: FoodCatalogItem, amount: number, amountUnit: QuantityMode) {
+    const convertedGrams = catalogAmountToGrams(food, amount, amountUnit);
+    const factor = convertedGrams / 100;
+    setIngredients((current) => [
+      ...current,
+      {
+        id: uid(),
+        name: food.name,
+        grams: Math.round(convertedGrams * 10) / 10,
+        source: 'Catálogo',
+        ...roundNutrients({
+          calories: food.calories * factor,
+          protein: food.protein * factor,
+          carbs: food.carbs * factor,
+          fat: food.fat * factor,
+          fiber: food.fiber * factor,
+          calcium: food.calcium * factor,
+          iron: food.iron * factor,
+          vitaminC: food.vitaminC * factor,
+        }),
+      },
+    ]);
+    setFoodQuery('');
+    setGrams(100);
+    setQuantityMode('g');
+  }
+
   useEffect(() => {
     if (!foodSearchOpen) return;
     const closeOnOutsidePress = (event: PointerEvent) => {
@@ -1600,27 +1633,7 @@ function MealDialog({
     if (mode === 'Catálogo') {
       const food = resolvedFood;
       if (!food) return;
-      const factor = catalogGrams / 100;
-      setIngredients([
-        ...ingredients,
-        {
-          id: uid(),
-          name: food.name,
-          grams: Math.round(catalogGrams * 10) / 10,
-          source: 'Catálogo',
-          ...roundNutrients({
-            calories: food.calories * factor,
-            protein: food.protein * factor,
-            carbs: food.carbs * factor,
-            fat: food.fat * factor,
-            fiber: food.fiber * factor,
-            calcium: food.calcium * factor,
-            iron: food.iron * factor,
-            vitaminC: food.vitaminC * factor,
-          }),
-        },
-      ]);
-      setFoodQuery('');
+      addCatalogIngredient(food, grams, quantityMode);
     } else if (manualName.trim() && manualComplete) {
       const per100 = {
         calories: manual.calories === ''
@@ -1966,10 +1979,21 @@ function MealDialog({
                   unit={quantityMode}
                   unitOptions={foodQuantityOptions}
                   onUnitChange={setQuantityMode}
-                  onChange={setGrams}
+                  onChange={(value, selectedUnit) => {
+                    const nextUnit = selectedUnit ?? quantityMode;
+                    const explicitlySelectedFood = selectedFood
+                      && normalizeText(selectedFood.name) === normalizeText(foodQuery)
+                      ? selectedFood
+                      : undefined;
+                    if (explicitlySelectedFood) {
+                      addCatalogIngredient(explicitlySelectedFood, value, nextUnit);
+                    } else {
+                      setGrams(value);
+                    }
+                  }}
                 />
               </Field>
-              <Button type="button" onClick={addIngredient}>
+              <Button type="button" onClick={() => addIngredient()}>
                 <Plus /> Adicionar
               </Button>
               <small className="field-hint food-match-hint">
@@ -3195,6 +3219,8 @@ function ProgressPage({
                     stroke="var(--color-weightKg)"
                     fill="url(#weightFill)"
                     strokeWidth={3}
+                    dot={{ r: 4, fill: 'var(--color-weightKg)', stroke: '#fff', strokeWidth: 2 }}
+                    activeDot={{ r: 5, fill: 'var(--color-weightKg)', stroke: '#fff', strokeWidth: 2 }}
                   />
                   <Area
                     dataKey="bodyFatPercent"
@@ -4049,7 +4075,7 @@ function NumberInput({
   onUnitChange,
 }: {
   value: number | '';
-  onChange: (value: number) => void;
+  onChange: (value: number, unit?: QuantityMode) => void;
   step?: string;
   min?: number;
   max?: number;
@@ -4132,8 +4158,8 @@ function NumberInput({
   }
 
   function commitDraftAndClose() {
-    onChange(parsedManualValue());
     if (unitOptions?.length) onUnitChange?.(draftUnit);
+    onChange(parsedManualValue(), unitOptions?.length ? draftUnit : undefined);
     setOpen(false);
   }
 
