@@ -345,6 +345,10 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
   -webkit-tap-highlight-color: transparent !important;
 }
 .chart-card [data-slot='chart'] { user-select: none; }
+.chart-goals-legend { display: flex; flex-wrap: wrap; gap: 7px 13px; margin: 0 0 8px; color: var(--muted-foreground); font-size: 10px; }
+.chart-goals-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.chart-goals-legend i { width: 15px; height: 0; border-top: 2px dashed rgba(229,72,63,.48); }
+.chart-goals-legend strong { color: var(--foreground); font-weight: 800; }
 
 /* Keep compact quantities such as “100 g” intact even in the narrow mobile column. */
 .ingredient-input .number-picker-trigger > span { display: block; width: max-content; max-width: none; white-space: nowrap !important; }

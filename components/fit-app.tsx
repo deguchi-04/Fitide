@@ -3300,6 +3300,7 @@ function ProgressPage({
                   <ReferenceLine
                     y={state.profile.targetWeightKg}
                     stroke="#e5483f"
+                    strokeOpacity={0.42}
                     strokeWidth={2}
                     strokeDasharray="7 6"
                     label={{
@@ -3370,9 +3371,14 @@ function ProgressPage({
         </Card>
         <Card className="panel chart-card">
           <CardHeader>
-            <CardTitle>Macros · {periodLabel}</CardTitle>
+              <CardTitle>Macros · {periodLabel}</CardTitle>
           </CardHeader>
           <CardContent>
+            <div className="chart-goals-legend" aria-label="Metas de macronutrientes">
+              <span><i />Proteína <strong>{proteinGoal} g</strong></span>
+              <span><i />Hidratos <strong>{carbsGoal} g</strong></span>
+              <span><i />Gordura <strong>{fatGoal} g</strong></span>
+            </div>
             <ChartContainer
               className="h-[240px] w-full"
               config={{
@@ -3386,9 +3392,9 @@ function ProgressPage({
                 <XAxis dataKey="label" tickLine={false} axisLine={false} />
                 <YAxis domain={[0, macroChartMaximum]} tickLine={false} axisLine={false} />
                 <ChartTooltip content={<ChartTooltipContent />} />
-                <ReferenceLine y={proteinGoal} stroke="#e5483f" strokeWidth={1.5} strokeDasharray="7 6" label={{ value: `Meta P ${proteinGoal} g`, position: 'insideTopRight', fill: '#e5483f', fontSize: 10 }} />
-                <ReferenceLine y={carbsGoal} stroke="#e5483f" strokeWidth={1.5} strokeDasharray="7 6" label={{ value: `Meta H ${carbsGoal} g`, position: 'insideRight', fill: '#e5483f', fontSize: 10 }} />
-                <ReferenceLine y={fatGoal} stroke="#e5483f" strokeWidth={1.5} strokeDasharray="7 6" label={{ value: `Meta G ${fatGoal} g`, position: 'insideBottomRight', fill: '#e5483f', fontSize: 10 }} />
+                <ReferenceLine y={proteinGoal} stroke="#e5483f" strokeOpacity={0.38} strokeWidth={1.5} strokeDasharray="7 6" />
+                <ReferenceLine y={carbsGoal} stroke="#e5483f" strokeOpacity={0.38} strokeWidth={1.5} strokeDasharray="7 6" />
+                <ReferenceLine y={fatGoal} stroke="#e5483f" strokeOpacity={0.38} strokeWidth={1.5} strokeDasharray="7 6" />
                 <Bar
                   dataKey="protein"
                   fill="var(--color-protein)"
@@ -3425,6 +3431,7 @@ function ProgressPage({
                 <ReferenceLine
                   y={waterGoal}
                   stroke="#e5483f"
+                  strokeOpacity={0.42}
                   strokeWidth={2}
                   strokeDasharray="7 6"
                   label={{ value: `Meta ${waterGoal.toLocaleString('pt-PT')} L`, position: 'insideTopRight', fill: '#e5483f', fontSize: 10 }}
