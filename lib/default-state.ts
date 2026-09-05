@@ -12,6 +12,7 @@ const profile: Profile = {
 };
 
 export const defaultState: AppState = {
+  theme: 'light',
   profile,
   goals: suggestedGoals(profile, [], 'lose_fat'),
   activities: [],

@@ -325,3 +325,156 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 
 /* Keep compact quantities such as “100 g” intact even in the narrow mobile column. */
 .ingredient-input .number-picker-trigger > span { display: block; width: max-content; max-width: none; white-space: nowrap !important; }
+
+/* Fasting: one continuous start/stop clock, with date controls kept in a modal. */
+.fasting-card-head { display: grid; grid-template-columns: 44px minmax(0,1fr) auto; gap: 12px; align-items: center; }
+.fasting-card-head .habit-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 14px; background: #ffebe4; color: #d84b31; }
+.fasting-card-head .habit-icon svg { width: 21px; height: 21px; }
+.fasting-card-head > div { min-width: 0; display: grid; gap: 2px; }
+.fasting-card-head > div > strong { overflow: hidden; color: #11232d; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
+.fasting-live { display: grid; gap: 16px; }
+.fasting-main-row { display: grid; grid-template-columns: minmax(0,1fr) 104px; gap: 18px; align-items: center; }
+.fasting-clock { min-width: 0; display: grid; gap: 4px; }
+.fasting-clock > span, .fasting-times span { color: #71838b; font-size: 11px; font-weight: 750; }
+.fasting-clock > strong { color: #11232d; font: 780 clamp(31px,5vw,46px)/1 var(--font-geist-mono); letter-spacing: -.055em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fasting-clock > small { color: var(--muted-foreground); }
+.fasting-action { --fast-progress: 0deg; position: relative; isolation: isolate; width: 100px; height: 100px; min-height: 100px; display: grid; place-items: center; align-content: center; gap: 1px; padding: 0; overflow: hidden; border: 0; border-radius: 50%; background: conic-gradient(#087fb7 0 360deg); color: #087fb7; font-size: 11px; font-weight: 900; letter-spacing: .05em; box-shadow: 0 8px 22px rgba(8,127,183,.16); }
+.fasting-action::before { content: ''; position: absolute; z-index: -1; inset: 7px; border-radius: inherit; background: var(--card); }
+.fasting-action.stop { background: conic-gradient(#2fb46e 0 var(--fast-progress),#dce8e3 var(--fast-progress) 360deg); color: #23945b; box-shadow: 0 8px 22px rgba(35,148,91,.16); }
+.fasting-action svg { width: 22px; height: 22px; }
+.fasting-times { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding-top: 15px; border-top: 1px solid var(--border); }
+.fasting-times > div { display: grid; gap: 4px; }
+.fasting-times strong { color: #263b45; font-size: 16px; text-transform: capitalize; }
+.fasting-status { min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 11px; background: #edf5f7; color: #58717c; font-size: 12px; font-weight: 800; }
+.fasting-status svg { width: 18px; height: 18px; padding: 3px; border: 1px solid currentColor; border-radius: 50%; }
+.fasting-status.met { background: #e2f5e9; color: #218655; }
+.fast-dialog-backdrop { z-index: 120; }
+.fast-dialog { width: min(440px,100%); display: grid; gap: 18px; padding: 24px; border: 1px solid var(--border); border-radius: 22px; background: var(--card); color: var(--foreground); box-shadow: 0 30px 90px rgba(3,17,26,.32); }
+.fast-dialog > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+.fast-dialog h2 { margin: 0; font-size: 25px; letter-spacing: -.035em; }
+.fast-dialog-suggestion { display: flex; align-items: center; gap: 9px; margin: 0; padding: 11px 12px; border-radius: 11px; background: #eaf5f8; color: #426b7c; font-size: 12px; line-height: 1.4; }
+.fast-dialog-suggestion svg { width: 18px; flex: 0 0 auto; color: #087fb7; }
+.fast-dialog-fields { display: grid; grid-template-columns: 1.25fr .75fr; gap: 10px; }
+.fast-dialog-fields label { min-width: 0; display: grid; gap: 6px; }
+.fast-dialog-fields label > span { color: var(--muted-foreground); font-size: 11px; font-weight: 750; }
+.fast-dialog-fields input { min-width: 0; }
+.fast-dialog > footer { display: grid; grid-template-columns: 1fr 1.45fr; gap: 9px; }
+
+/* Appearance control */
+.appearance-card { grid-column: 1 / -1; }
+.theme-switch-row { width: 100%; display: grid; grid-template-columns: 44px minmax(0,1fr) 50px; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--secondary); color: var(--foreground); text-align: left; }
+.theme-switch-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: var(--card); color: var(--plum); }
+.theme-switch-icon svg { width: 20px; }
+.theme-switch-row > span:nth-child(2) { min-width: 0; display: grid; gap: 2px; }
+.theme-switch-row small { color: var(--muted-foreground); }
+.theme-switch-row > i { position: relative; width: 48px; height: 28px; border-radius: 999px; background: #a8bac2; transition: background .2s ease; }
+.theme-switch-row > i b { position: absolute; top: 4px; left: 4px; width: 20px; height: 20px; border-radius: 50%; background: white; box-shadow: 0 2px 6px rgba(2,16,24,.24); transition: transform .2s ease; }
+.theme-switch-row[aria-checked='true'] > i { background: #35a6d1; }
+.theme-switch-row[aria-checked='true'] > i b { transform: translateX(20px); }
+
+/* Full dark theme, extending the existing night-city identity. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --background: #07131c;
+  --foreground: #eff7fa;
+  --card: #0e202c;
+  --primary: #f05a3d;
+  --secondary: #142d3a;
+  --muted: #142936;
+  --muted-foreground: #91a8b2;
+  --border: #284756;
+  --plum: #4fc4ec;
+  --orange: #ff7655;
+  --green: #3bc58f;
+  --blue: #5dc9ee;
+}
+:root[data-theme='dark'] body,
+:root[data-theme='dark'] .main-surface { background: radial-gradient(circle at 90% 0,rgba(32,150,197,.16),transparent 28%),linear-gradient(180deg,#091822 0,#07131c 100%); }
+:root[data-theme='dark'] .panel,
+:root[data-theme='dark'] .metric-card,
+:root[data-theme='dark'] .summary-strip,
+:root[data-theme='dark'] .progress-stats,
+:root[data-theme='dark'] .calculation-strip,
+:root[data-theme='dark'] .judo-summary { box-shadow: 0 12px 34px rgba(0,0,0,.22); }
+:root[data-theme='dark'] .habit-grid > .habit-tile,
+:root[data-theme='dark'] .dialog-card,
+:root[data-theme='dark'] .confirm-card,
+:root[data-theme='dark'] .food-results,
+:root[data-theme='dark'] .food-search input,
+:root[data-theme='dark'] .number-picker-trigger,
+:root[data-theme='dark'] .meal-assistant-results article,
+:root[data-theme='dark'] .assistant-food-match select,
+:root[data-theme='dark'] .muscle-picker button,
+:root[data-theme='dark'] .day-picker button,
+:root[data-theme='dark'] .field textarea,
+:root[data-theme='dark'] .button-link.outline,
+:root[data-theme='dark'] .technique-filters button,
+:root[data-theme='dark'] .technique-grid article > a,
+:root[data-theme='dark'] select { background: var(--card); color: var(--foreground); }
+:root[data-theme='dark'] .ingredient-input,
+:root[data-theme='dark'] .saved-foods,
+:root[data-theme='dark'] .activity-builder,
+:root[data-theme='dark'] .interval-builder,
+:root[data-theme='dark'] .workout-settings-builder,
+:root[data-theme='dark'] .selected-techniques { background: #112936; }
+:root[data-theme='dark'] .meal-assistant,
+:root[data-theme='dark'] .meal-assistant.is-collapsed { background: linear-gradient(135deg,rgba(44,162,205,.13),rgba(240,90,61,.09)); }
+:root[data-theme='dark'] .meal-assistant textarea { background: #0a1b26; color: var(--foreground); }
+:root[data-theme='dark'] .nutrition-total,
+:root[data-theme='dark'] .chart-range,
+:root[data-theme='dark'] .goal-options,
+:root[data-theme='dark'] .segmented { background: #132a36; }
+:root[data-theme='dark'] .chart-range button.selected,
+:root[data-theme='dark'] .goal-options button.selected,
+:root[data-theme='dark'] .segmented button.selected { background: #234554; color: #69d2f5; }
+:root[data-theme='dark'] .macro-pie-chart::after { background: var(--card); box-shadow: 0 0 0 4px rgba(255,255,255,.06); }
+:root[data-theme='dark'] .macro-pie-legend,
+:root[data-theme='dark'] .field > span,
+:root[data-theme='dark'] .metric-card p,
+:root[data-theme='dark'] .metric-card > span,
+:root[data-theme='dark'] .training-meta span { color: var(--muted-foreground); }
+:root[data-theme='dark'] .meal-row,
+:root[data-theme='dark'] .meal-list,
+:root[data-theme='dark'] .water-custom { border-color: var(--border); }
+:root[data-theme='dark'] .meal-emoji,
+:root[data-theme='dark'] .training-meta span,
+:root[data-theme='dark'] .empty-state > div,
+:root[data-theme='dark'] .round-icon.soft,
+:root[data-theme='dark'] .history-row > svg,
+:root[data-theme='dark'] .exercise-number { background: #183747; }
+:root[data-theme='dark'] .calendar-grid button:hover,
+:root[data-theme='dark'] .meal-edit-button:hover,
+:root[data-theme='dark'] .food-results button:hover,
+:root[data-theme='dark'] .plan-list > button:hover { background: #152e3a; }
+:root[data-theme='dark'] .time-badge { background: #432d27; color: #ff9a7e; }
+:root[data-theme='dark'] .source-badge { background: #1b3541; color: #a8bdc6; }
+:root[data-theme='dark'] .source-badge.live { background: #163a2e; color: #73d5ac; }
+:root[data-theme='dark'] .set-table > div.done,
+:root[data-theme='dark'] .past-fast-record { background: #123329; }
+:root[data-theme='dark'] .past-fast-record strong { color: #bcebd8; }
+:root[data-theme='dark'] .past-fast-record small,
+:root[data-theme='dark'] .past-fast-record em { color: #7fb9a3; }
+:root[data-theme='dark'] .health-strip { border-color: #2c5669; background: #123040; }
+:root[data-theme='dark'] .health-strip > div { border-color: #2c5669; }
+:root[data-theme='dark'] .health-strip small { color: #9fb8c2; }
+:root[data-theme='dark'] .fasting-card-head > div > strong,
+:root[data-theme='dark'] .fasting-clock > strong,
+:root[data-theme='dark'] .fasting-times strong { color: var(--foreground); }
+:root[data-theme='dark'] .fasting-action.stop { background: conic-gradient(#42ce91 0 var(--fast-progress),#214238 var(--fast-progress) 360deg); color: #58d9a1; }
+:root[data-theme='dark'] .fasting-status { background: #15313d; color: #9ab6c1; }
+:root[data-theme='dark'] .fasting-status.met { background: #153a2e; color: #65d7a6; }
+:root[data-theme='dark'] .fast-dialog-suggestion { background: #14313e; color: #a7c4cf; }
+:root[data-theme='dark'] .avatar { border-color: #2b4c5b; background: #19394a; color: #d5f2fc; }
+:root[data-theme='dark'] .mobile-nav .add { border-color: #07131c; }
+:root[data-theme='dark'] .privacy-page article { background: var(--card); }
+
+@media (max-width: 620px) {
+  .fasting-main-row { grid-template-columns: minmax(0,1fr) 90px; gap: 12px; }
+  .fasting-action { width: 88px; height: 88px; min-height: 88px; }
+  .fasting-clock > strong { font-size: clamp(28px,9.5vw,38px); }
+  .fasting-card-head { grid-template-columns: 42px minmax(0,1fr) auto; gap: 10px; }
+  .fasting-card-head .habit-icon { width: 42px; height: 42px; }
+  .fast-dialog-backdrop { align-items: end; padding: 0; }
+  .fast-dialog { width: 100%; border-width: 1px 0 0; border-radius: 22px 22px 0 0; padding: 22px 18px max(22px,env(safe-area-inset-bottom)); }
+  .fast-dialog-fields { grid-template-columns: 1fr 1fr; }
+}

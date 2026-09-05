@@ -168,6 +168,7 @@ export interface HealthSnapshot {
 }
 
 export interface AppState {
+  theme: 'light' | 'dark';
   profile: Profile;
   goals: Goals;
   activities: Activity[];

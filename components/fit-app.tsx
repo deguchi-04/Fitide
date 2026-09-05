@@ -21,6 +21,7 @@ import {
   Home,
   CircleHelp,
   LoaderCircle,
+  Moon,
   Minus,
   Plus,
   RotateCcw,
@@ -28,6 +29,7 @@ import {
   Scale,
   Settings,
   Sparkles,
+  Sun,
   TimerReset,
   Trash2,
   TrendingDown,
@@ -387,6 +389,13 @@ function formatDuration(totalSeconds: number) {
   return `${hours ? `${String(hours).padStart(2, '0')}:` : ''}${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function formatFastDuration(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 function youtubeIdFromUrl(url: string) {
   const match = url.match(/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:watch\?v=|embed\/|shorts\/))([A-Za-z0-9_-]{6,})/);
   return match?.[1];
@@ -466,6 +475,13 @@ export default function FitApp() {
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const theme = state.theme ?? 'light';
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.style.colorScheme = theme;
+  }, [state.theme]);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -1083,6 +1099,13 @@ function TodayPage({
   const weeklyFat = fatEquivalentKg(deficit);
   const health = state.healthSnapshots.find((entry) => entry.date === date);
   const recordedFast = state.fasts.find((entry) => localDateKey(new Date(entry.start)) === date);
+  const latestMealTime = useMemo(() => {
+    const nowTime = Date.now();
+    const timestamps = state.meals
+      .map((meal) => new Date(meal.createdAt).getTime())
+      .filter((timestamp) => Number.isFinite(timestamp) && timestamp <= nowTime);
+    return timestamps.length ? new Date(Math.max(...timestamps)) : new Date();
+  }, [state.meals]);
   const [pastFastStart, setPastFastStart] = useState('20:00');
   const [pastFastEnd, setPastFastEnd] = useState('12:00');
   const [pastFastMessage, setPastFastMessage] = useState('');
@@ -1090,6 +1113,7 @@ function TodayPage({
   const [fastStartDate, setFastStartDate] = useState(localDateKey());
   const [fastStartTime, setFastStartTime] = useState(localTimeValue());
   const [fastStartError, setFastStartError] = useState('');
+  const [fastStartOpen, setFastStartOpen] = useState(false);
   const [waterMl, setWaterMl] = useState(250);
   const macroPie = [
     { name: 'Proteína', value: Math.round(consumed.protein * 4), fill: '#087fb7' },
@@ -1110,6 +1134,23 @@ function TodayPage({
     ? Math.max(0, Math.round((new Date(recordedFast.end).getTime() - new Date(recordedFast.start).getTime()) / 60_000))
     : 0;
   const recordedFastDuration = `${Math.floor(recordedFastMinutes / 60)} h${recordedFastMinutes % 60 ? ` ${recordedFastMinutes % 60} min` : ''}`;
+  const fastingGoalSeconds = Math.max(1, state.goals.fastingHours * 3600);
+  const fastingProgress = Math.min(100, Math.round((fastSeconds / fastingGoalSeconds) * 100));
+  const fastStart = state.activeFastStart ? new Date(state.activeFastStart) : null;
+  const fastTarget = fastStart ? new Date(fastStart.getTime() + fastingGoalSeconds * 1000) : null;
+  const fastingGoalMet = Boolean(state.activeFastStart && fastSeconds >= fastingGoalSeconds);
+
+  useViewportLock(fastStartOpen);
+
+  useEffect(() => {
+    if (!fastStartOpen) return;
+    const close = (event: Event) => {
+      event.preventDefault();
+      setFastStartOpen(false);
+    };
+    window.addEventListener('fitide-back', close);
+    return () => window.removeEventListener('fitide-back', close);
+  }, [fastStartOpen]);
 
   useEffect(() => {
     if (isToday) return;
@@ -1131,6 +1172,14 @@ function TodayPage({
     }
     setFastStartError('');
     onFast(selectedStart.toISOString());
+    setFastStartOpen(false);
+  }
+
+  function openFastStartDialog() {
+    setFastStartDate(localDateKey(latestMealTime));
+    setFastStartTime(localTimeValue(latestMealTime));
+    setFastStartError('');
+    setFastStartOpen(true);
   }
   return (
     <div className="dashboard-grid page-enter">
@@ -1317,49 +1366,42 @@ function TodayPage({
             </div>
           </div>
           <div className="habit-tile fast-habit">
-            <div className="habit-heading">
+            <div className="fasting-card-head">
               <span className="habit-icon"><TimerReset /></span>
-              <span className="habit-copy">
-                <small className="habit-label">Jejum intermitente</small>
-                <strong>
-                  {state.activeFastStart
-                    ? formatDuration(fastSeconds)
-                    : `${state.goals.fastingHours}:00 h`}
-                </strong>
-                <small>
-                  {state.activeFastStart
-                    ? `desde ${new Date(state.activeFastStart).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
-                    : 'meta configurada'}
-                </small>
-              </span>
-              <span className={`habit-badge ${state.activeFastStart ? 'active' : ''}`}>
-                {state.activeFastStart ? 'A decorrer' : `${state.goals.fastingHours} h`}
-              </span>
+              <div><small className="habit-label">Jejum intermitente</small><strong>{state.activeFastStart ? 'Em curso' : 'Pronto para começar'}</strong></div>
+              <span className={`habit-badge ${state.activeFastStart ? 'active' : ''}`}>{state.goals.fastingHours} h</span>
             </div>
             {isToday ? (
-              state.activeFastStart ? (
-                <Button className="wide-button" variant="outline" onClick={() => onFast()}>
-                  <CirclePause /> Terminar jejum
-                </Button>
-              ) : (
-                <div className="fast-start-form">
-                  <div className="fast-start-fields">
-                    <label>
-                      <span>Data de início</span>
-                      <Input type="date" max={localDateKey()} value={fastStartDate} onChange={(event) => { setFastStartDate(event.target.value); setFastStartError(''); }} />
-                    </label>
-                    <label>
-                      <span>Hora de início</span>
-                      <Input type="time" value={fastStartTime} onChange={(event) => { setFastStartTime(event.target.value); setFastStartError(''); }} />
-                    </label>
+              <div className={`fasting-live ${state.activeFastStart ? 'is-active' : ''}`}>
+                <div className="fasting-main-row">
+                  <div className="fasting-clock">
+                    <span>Tempo de jejum</span>
+                    <strong>{formatFastDuration(fastSeconds)}</strong>
+                    {!state.activeFastStart && recordedFast && <small>Último jejum: {recordedFastDuration}</small>}
                   </div>
-                  {fastStartError && <small className="fast-start-error">{fastStartError}</small>}
-                  <div className="fast-start-actions">
-                    <Button variant="outline" onClick={() => onFast()}><CirclePlay /> Agora</Button>
-                    <Button onClick={startFastFromSelection}><TimerReset /> Usar esta hora</Button>
-                  </div>
+                  <button
+                    type="button"
+                    className={`fasting-action ${state.activeFastStart ? 'stop' : 'start'}`}
+                    style={{ '--fast-progress': `${fastingProgress * 3.6}deg` } as React.CSSProperties}
+                    onClick={() => state.activeFastStart ? onFast() : openFastStartDialog()}
+                    aria-label={state.activeFastStart ? 'Terminar jejum' : 'Iniciar jejum'}
+                  >
+                    {state.activeFastStart ? <><CirclePause /><span>FIM</span></> : <><CirclePlay /><span>INICIAR</span></>}
+                  </button>
                 </div>
-              )
+                {fastStart && fastTarget && (
+                  <>
+                    <div className="fasting-times">
+                      <div><span>Começou</span><strong>{fastStart.toLocaleDateString('pt-PT', { weekday: 'short' })}, {localTimeValue(fastStart)}</strong></div>
+                      <div><span>Meta</span><strong>{fastTarget.toLocaleDateString('pt-PT', { weekday: 'short' })}, {localTimeValue(fastTarget)}</strong></div>
+                    </div>
+                    <div className={`fasting-status ${fastingGoalMet ? 'met' : ''}`}>
+                      <Check />
+                      <span>{fastingGoalMet ? `Meta alcançada: ${state.goals.fastingHours} h` : `${fastingProgress}% da meta`}</span>
+                    </div>
+                  </>
+                )}
+              </div>
             ) : (
               <div className="past-fast-area">
                 {recordedFast && !pastFastEditing ? (
@@ -1386,6 +1428,25 @@ function TodayPage({
           </div>
         </CardContent>
       </Card>
+      {fastStartOpen && (
+        <OverlayPortal>
+          <div className="dialog-backdrop fast-dialog-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setFastStartOpen(false); }}>
+            <section className="fast-dialog" role="dialog" aria-modal="true" aria-labelledby="fast-start-title">
+              <header>
+                <div><p className="eyebrow">NOVO JEJUM</p><h2 id="fast-start-title">Quando começaste?</h2></div>
+                <Button type="button" variant="ghost" size="icon" aria-label="Fechar" onClick={() => setFastStartOpen(false)}><X /></Button>
+              </header>
+              <p className="fast-dialog-suggestion"><Utensils /> Preenchido com a hora da última refeição registada.</p>
+              <div className="fast-dialog-fields">
+                <label><span>Data</span><Input type="date" max={localDateKey()} value={fastStartDate} onChange={(event) => { setFastStartDate(event.target.value); setFastStartError(''); }} /></label>
+                <label><span>Hora</span><Input type="time" value={fastStartTime} onChange={(event) => { setFastStartTime(event.target.value); setFastStartError(''); }} /></label>
+              </div>
+              {fastStartError && <small className="fast-start-error">{fastStartError}</small>}
+              <footer><Button type="button" variant="outline" onClick={() => setFastStartOpen(false)}>Cancelar</Button><Button type="button" onClick={startFastFromSelection}><CirclePlay /> Começar jejum</Button></footer>
+            </section>
+          </div>
+        </OverlayPortal>
+      )}
       <Card className="panel macros-panel">
         <CardHeader className="panel-heading">
           <div>
@@ -3596,6 +3657,25 @@ function SettingsPage({
         </div>
       </section>
       <form onSubmit={saveProfile} className="settings-grid">
+        <Card className="panel appearance-card">
+          <CardHeader>
+            <CardTitle>Aparência</CardTitle>
+            <CardDescription>Escolhe o tema da Fitide.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <button
+              type="button"
+              className="theme-switch-row"
+              role="switch"
+              aria-checked={state.theme === 'dark'}
+              onClick={() => setState((current) => ({ ...current, theme: current.theme === 'dark' ? 'light' : 'dark' }))}
+            >
+              <span className="theme-switch-icon">{state.theme === 'dark' ? <Moon /> : <Sun />}</span>
+              <span><strong>Modo escuro</strong><small>{state.theme === 'dark' ? 'Ativado' : 'Desativado'}</small></span>
+              <i aria-hidden="true"><b /></i>
+            </button>
+          </CardContent>
+        </Card>
         <Card className="panel">
           <CardHeader>
             <CardTitle>Perfil e composição</CardTitle>
