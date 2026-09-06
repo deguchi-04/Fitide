@@ -401,7 +401,7 @@ function formatFastDuration(totalSeconds: number) {
 
 const labelFieldAliases: Partial<Record<keyof Nutrients, string[]>> = {
   protein: ['proteina', 'proteinas', 'protein', 'proteines'],
-  carbs: ['hidratos de carbono', 'hidratos', 'h carbono', 'carboidratos', 'carboidrato', 'carbohydrate', 'carbohydrates', 'glucides'],
+  carbs: ['hidratos de carbono', 'hidratos', 'h carbono', 'de carbono', 'carboidratos', 'carboidrato', 'carbohydrate', 'carbohydrates', 'glucides'],
   fat: ['lipidos', 'lipido', 'gorduras totais', 'gordura total', 'gordura', 'grasas', 'grasa', 'fat', 'matieres grasses'],
   fiber: ['fibra alimentar', 'fibras alimentares', 'fibra', 'fiber', 'fibre', 'fibres alimentaires'],
   calcium: ['calcio', 'calcium'],
@@ -418,6 +418,20 @@ function numericValues(value: string) {
   return [...value.matchAll(/\b(\d{1,5}(?:[.,]\d{1,3})?)\b/g)]
     .map((match) => parseLabelNumber(match[1]))
     .filter((number): number is number => number !== undefined);
+}
+
+function hasPer100Reference(text: string) {
+  const normalized = normalizeText(text);
+  return /(?:por|per|pour|cada)?\s*1000?\s*(?:g|gr|gramas|ml)\b/.test(normalized);
+}
+
+function labelLineMatchesAlias(normalizedLine: string, aliases: string[]) {
+  const words = normalizedLine.split(' ');
+  return aliases.some((alias) => {
+    if (normalizedLine.includes(alias)) return true;
+    if (alias.includes(' ')) return false;
+    return words.some((word) => word.length >= 4 && Math.abs(word.length - alias.length) <= 1 && editDistance(word, alias) <= 1);
+  });
 }
 
 function parseNutritionLabel(text: string): Partial<Record<keyof Nutrients, number>> {
@@ -446,7 +460,7 @@ function parseNutritionLabel(text: string): Partial<Record<keyof Nutrients, numb
     }
 
     for (const [key, aliases] of Object.entries(labelFieldAliases) as Array<[keyof Nutrients, string[]]>) {
-      if (result[key] !== undefined || !aliases.some((alias) => normalized.includes(alias))) continue;
+      if (result[key] !== undefined || !labelLineMatchesAlias(normalized, aliases)) continue;
       if (key === 'fat' && /(saturad|trans)/.test(normalized)) continue;
       if (key === 'carbs' && /(acucar|sugar)/.test(normalized)) continue;
       const values = numericValues(candidate);
@@ -462,6 +476,12 @@ function parseNutritionLabel(text: string): Partial<Record<keyof Nutrients, numb
     if (kcal !== undefined) result.calories = kcal;
   }
 
+  if (result.calories !== undefined && result.protein !== undefined && result.carbs !== undefined && result.fat !== undefined) {
+    const calculatedCalories = (result.protein * 4) + (result.carbs * 4) + (result.fat * 9) + ((result.fiber ?? 0) * 2);
+    const difference = Math.abs(result.calories - calculatedCalories);
+    if (calculatedCalories >= 10 && difference > Math.max(35, calculatedCalories * 0.45)) delete result.calories;
+  }
+
   return result;
 }
 
@@ -472,7 +492,7 @@ async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
   const sourceY = Math.max(0, Math.round(crop.y * scaleY));
   const sourceWidth = Math.min(image.naturalWidth - sourceX, Math.max(1, Math.round(crop.width * scaleX)));
   const sourceHeight = Math.min(image.naturalHeight - sourceY, Math.max(1, Math.round(crop.height * scaleY)));
-  const outputScale = Math.min(2, 2200 / sourceWidth, 3000 / sourceHeight);
+  const outputScale = Math.min(2.5, 1600 / sourceWidth, 2200 / sourceHeight);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sourceWidth * outputScale));
   canvas.height = Math.max(1, Math.round(sourceHeight * outputScale));
@@ -571,6 +591,28 @@ async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('crop-failed'))), 'image/jpeg', 0.94);
   });
+}
+
+async function prepareNutritionPreview(file: File) {
+  if (typeof createImageBitmap !== 'function') return file;
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  try {
+    const previewScale = Math.min(1, 1800 / bitmap.width, 1800 / bitmap.height);
+    if (previewScale >= 1) return file;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * previewScale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * previewScale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('canvas-unavailable');
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('preview-failed'))), 'image/jpeg', 0.9);
+    });
+  } finally {
+    bitmap.close();
+  }
 }
 
 function youtubeIdFromUrl(url: string) {
@@ -1777,6 +1819,8 @@ function MealDialog({
   const [assistantOpen, setAssistantOpen] = useState(false);
   const labelPhotoInput = useRef<HTMLInputElement>(null);
   const labelCropImage = useRef<HTMLImageElement>(null);
+  const labelWorker = useRef<{ terminate: () => Promise<unknown> } | null>(null);
+  const labelScanRun = useRef(0);
   const [labelPhotoUrl, setLabelPhotoUrl] = useState('');
   const [labelCrop, setLabelCrop] = useState<PercentCrop>({ unit: '%', x: 7, y: 18, width: 86, height: 62 });
   const [completedLabelCrop, setCompletedLabelCrop] = useState<PixelCrop>();
@@ -1831,6 +1875,13 @@ function MealDialog({
   useEffect(() => () => {
     if (labelPhotoUrl) URL.revokeObjectURL(labelPhotoUrl);
   }, [labelPhotoUrl]);
+
+  useEffect(() => () => {
+    labelScanRun.current += 1;
+    const worker = labelWorker.current;
+    labelWorker.current = null;
+    void worker?.terminate().catch(() => undefined);
+  }, []);
 
   function catalogAmountToGrams(food: FoodCatalogItem, amount: number, amountUnit: QuantityMode) {
     if (amountUnit === 'unit') return amount * averageUnitGrams(food.name);
@@ -1973,47 +2024,74 @@ function MealDialog({
     if (labelPhotoInput.current) labelPhotoInput.current.value = '';
   }
 
-  function openLabelCrop(file: File) {
-    setLabelScanStatus('idle');
+  async function openLabelCrop(file: File) {
+    const runId = labelScanRun.current + 1;
+    labelScanRun.current = runId;
+    setLabelScanStatus('reading');
     setLabelScanProgress(0);
-    setLabelScanMessage('');
+    setLabelScanMessage('A otimizar a foto para não sobrecarregar a app…');
     setLabelCrop({ unit: '%', x: 7, y: 18, width: 86, height: 62 });
     setCompletedLabelCrop(undefined);
-    setLabelPhotoUrl(URL.createObjectURL(file));
+    try {
+      const preview = await prepareNutritionPreview(file);
+      if (labelScanRun.current !== runId) return;
+      setLabelPhotoUrl(URL.createObjectURL(preview));
+      setLabelScanStatus('idle');
+      setLabelScanMessage('Recorta a tabela e deixa a coluna “por porção” fora da seleção.');
+    } catch {
+      if (labelScanRun.current !== runId) return;
+      setLabelScanStatus('error');
+      setLabelScanMessage('Não consegui preparar esta foto. Tenta novamente com a câmara mais próxima da tabela.');
+      if (labelPhotoInput.current) labelPhotoInput.current.value = '';
+    }
   }
 
   async function scanNutritionLabel(image: Blob) {
+    const runId = labelScanRun.current + 1;
+    labelScanRun.current = runId;
     setLabelScanStatus('reading');
     setLabelScanProgress(0);
     setLabelScanMessage('A preparar a leitura…');
     let worker: Awaited<ReturnType<(typeof import('tesseract.js'))['createWorker']>> | undefined;
     try {
       const { createWorker, PSM } = await import('tesseract.js');
-      worker = await createWorker(['por', 'eng'], undefined, {
+      worker = await createWorker('por', undefined, {
         logger: ({ status, progress }: { status: string; progress: number }) => {
+          if (labelScanRun.current !== runId) return;
           const percent = Math.round((progress || 0) * 100);
           setLabelScanProgress(percent);
           setLabelScanMessage(status === 'recognizing text' ? `A ler o rótulo… ${percent}%` : 'A preparar o leitor…');
         },
       });
+      labelWorker.current = worker;
+      if (labelScanRun.current !== runId) return;
       await worker.setParameters({
         tessedit_pageseg_mode: PSM.SINGLE_COLUMN,
         preserve_interword_spaces: '1',
         user_defined_dpi: '300',
       });
-      const { data } = await worker.recognize(image, { rotateAuto: true });
+      const { data } = await worker.recognize(image);
+      if (labelScanRun.current !== runId) return;
+      if (!hasPer100Reference(data.text)) throw new Error('missing-per-100');
       const recognized = parseNutritionLabel(data.text);
       const entries = Object.entries(recognized) as Array<[keyof Nutrients, number]>;
-      if (!entries.length) throw new Error('no-values');
+      const macroEntries = entries.filter(([key]) => ['protein', 'carbs', 'fat', 'fiber'].includes(key));
+      if (macroEntries.length < 3) throw new Error('no-values');
       setManual((current) => ({ ...current, ...recognized }));
       setLabelScanStatus('done');
       setLabelScanProgress(100);
-      setLabelScanMessage(`${entries.length} valores preenchidos. Confirma os números antes de adicionar.`);
-    } catch {
+      setLabelScanMessage(`${entries.length} valores por 100 g/ml preenchidos. A coluna por porção foi ignorada.`);
+    } catch (error) {
+      if (labelScanRun.current !== runId) return;
       setLabelScanStatus('error');
-      setLabelScanMessage('Não consegui ler valores suficientes. Tenta uma foto mais direita, nítida e com boa luz.');
+      setLabelScanMessage(
+        error instanceof Error && error.message === 'missing-per-100'
+          ? 'Não consegui confirmar a referência por 100 g/ml. Inclui esse cabeçalho no recorte e exclui a coluna por porção.'
+          : 'Não consegui ler pelo menos 3 valores por 100 g/ml. Aproxima a câmara e recorta apenas essa informação.',
+      );
     } finally {
       await worker?.terminate().catch(() => undefined);
+      if (labelWorker.current === worker) labelWorker.current = null;
       if (labelPhotoInput.current) labelPhotoInput.current.value = '';
     }
   }
@@ -2335,7 +2413,7 @@ function MealDialog({
                   <span><Camera /></span>
                   <div>
                     <strong>Ler tabela pela câmara</strong>
-                    <small>A foto é processada no dispositivo. Lípidos são preenchidos como gordura.</small>
+                    <small>Usa apenas valores por 100 g/ml. Lípidos são preenchidos como gordura.</small>
                   </div>
                 </div>
                 <input
@@ -2346,7 +2424,7 @@ function MealDialog({
                   capture="environment"
                   onChange={(event) => {
                     const file = event.target.files?.[0];
-                    if (file) openLabelCrop(file);
+                    if (file) void openLabelCrop(file);
                   }}
                 />
                 <Button
@@ -2372,7 +2450,7 @@ function MealDialog({
                         </div>
                         <Button type="button" variant="ghost" size="icon" aria-label="Cancelar recorte" onClick={closeLabelCrop}><X /></Button>
                       </header>
-                      <p className="label-crop-help">Arrasta a caixa e os cantos até incluir os nomes e a coluna “por 100 g/ml”.</p>
+                      <p className="label-crop-help">Inclui os nomes, “100 g/ml” e a primeira coluna de valores. Deixa “por porção” e “%DR” fora da caixa.</p>
                       <div className="label-crop-stage">
                         <ReactCrop
                           crop={labelCrop}
