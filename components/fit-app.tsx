@@ -7,6 +7,7 @@ import {
   Apple,
   ArrowLeft,
   BookOpen,
+  Camera,
   CalendarDays,
   Check,
   ChevronDown,
@@ -395,6 +396,55 @@ function formatFastDuration(totalSeconds: number) {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+const labelFieldAliases: Partial<Record<keyof Nutrients, string[]>> = {
+  protein: ['proteina', 'proteinas', 'protein'],
+  carbs: ['hidratos de carbono', 'hidratos', 'carboidratos', 'carboidrato', 'carbohydrate'],
+  fat: ['lipidos', 'lipido', 'gorduras totais', 'gordura total', 'gordura', 'fat'],
+  fiber: ['fibra alimentar', 'fibras alimentares', 'fibra', 'fiber', 'fibre'],
+  calcium: ['calcio', 'calcium'],
+  iron: ['ferro', 'iron'],
+  vitaminC: ['vitamina c', 'vitamin c'],
+};
+
+function parseLabelNumber(value: string) {
+  const number = Number(value.replace(',', '.'));
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function numericValues(value: string) {
+  return [...value.matchAll(/\b(\d{1,5}(?:[.,]\d{1,3})?)\b/g)]
+    .map((match) => parseLabelNumber(match[1]))
+    .filter((number): number is number => number !== undefined);
+}
+
+function parseNutritionLabel(text: string): Partial<Record<keyof Nutrients, number>> {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const result: Partial<Record<keyof Nutrients, number>> = {};
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const normalized = normalizeText(line);
+    const candidate = `${line} ${lines[index + 1] ?? ''}`;
+
+    if (result.calories === undefined && (normalized.includes('valor energetico') || normalized.includes('energia') || normalized.includes('energy'))) {
+      const kcalMatches = [...candidate.matchAll(/(\d{1,5}(?:[.,]\d{1,3})?)\s*kcal/gi)];
+      const kcal = kcalMatches.length ? parseLabelNumber(kcalMatches[0][1]) : undefined;
+      const fallbackValues = numericValues(candidate);
+      result.calories = kcal ?? (fallbackValues.length > 1 ? fallbackValues[1] : fallbackValues[0]);
+    }
+
+    for (const [key, aliases] of Object.entries(labelFieldAliases) as Array<[keyof Nutrients, string[]]>) {
+      if (result[key] !== undefined || !aliases.some((alias) => normalized.includes(alias))) continue;
+      if (key === 'fat' && /(saturad|trans)/.test(normalized)) continue;
+      if (key === 'carbs' && /(acucar|sugar)/.test(normalized)) continue;
+      const values = numericValues(candidate);
+      if (values.length) result[key] = values[0];
+    }
+  }
+
+  return result;
 }
 
 function youtubeIdFromUrl(url: string) {
@@ -1599,6 +1649,10 @@ function MealDialog({
   const [assistantDrafts, setAssistantDrafts] = useState<MealAssistantDraft[]>([]);
   const [assistantMessage, setAssistantMessage] = useState('');
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const labelPhotoInput = useRef<HTMLInputElement>(null);
+  const [labelScanStatus, setLabelScanStatus] = useState<'idle' | 'reading' | 'done' | 'error'>('idle');
+  const [labelScanProgress, setLabelScanProgress] = useState(0);
+  const [labelScanMessage, setLabelScanMessage] = useState('');
   const [manual, setManual] = useState<Record<keyof Nutrients, number | ''>>({
     calories: '',
     protein: '',
@@ -1775,6 +1829,37 @@ function MealDialog({
     });
     setGrams(100);
     setSaveToCatalog(true);
+  }
+
+  async function scanNutritionLabel(file: File) {
+    setLabelScanStatus('reading');
+    setLabelScanProgress(0);
+    setLabelScanMessage('A preparar a leitura…');
+    let worker: Awaited<ReturnType<(typeof import('tesseract.js'))['createWorker']>> | undefined;
+    try {
+      const { createWorker } = await import('tesseract.js');
+      worker = await createWorker(['por', 'eng'], undefined, {
+        logger: ({ status, progress }: { status: string; progress: number }) => {
+          const percent = Math.round((progress || 0) * 100);
+          setLabelScanProgress(percent);
+          setLabelScanMessage(status === 'recognizing text' ? `A ler o rótulo… ${percent}%` : 'A preparar o leitor…');
+        },
+      });
+      const { data } = await worker.recognize(file, { rotateAuto: true });
+      const recognized = parseNutritionLabel(data.text);
+      const entries = Object.entries(recognized) as Array<[keyof Nutrients, number]>;
+      if (!entries.length) throw new Error('no-values');
+      setManual((current) => ({ ...current, ...recognized }));
+      setLabelScanStatus('done');
+      setLabelScanProgress(100);
+      setLabelScanMessage(`${entries.length} valores preenchidos. Confirma os números antes de adicionar.`);
+    } catch {
+      setLabelScanStatus('error');
+      setLabelScanMessage('Não consegui ler valores suficientes. Tenta uma foto mais direita, nítida e com boa luz.');
+    } finally {
+      await worker?.terminate().catch(() => undefined);
+      if (labelPhotoInput.current) labelPhotoInput.current.value = '';
+    }
   }
 
   function analyzeMealDescription() {
@@ -2066,6 +2151,37 @@ function MealDialog({
             </div>
           ) : (
             <div className="manual-food">
+              <section className={`label-scanner ${labelScanStatus}`} aria-live="polite">
+                <div className="label-scanner-copy">
+                  <span><Camera /></span>
+                  <div>
+                    <strong>Ler tabela pela câmara</strong>
+                    <small>A foto é processada no dispositivo. Lípidos são preenchidos como gordura.</small>
+                  </div>
+                </div>
+                <input
+                  ref={labelPhotoInput}
+                  className="label-photo-input"
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void scanNutritionLabel(file);
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={labelScanStatus === 'reading'}
+                  onClick={() => labelPhotoInput.current?.click()}
+                >
+                  {labelScanStatus === 'reading' ? <LoaderCircle className="spin" /> : <Camera />}
+                  {labelScanStatus === 'reading' ? 'A analisar…' : labelScanStatus === 'done' ? 'Tirar outra foto' : 'Fotografar rótulo'}
+                </Button>
+                {labelScanStatus === 'reading' && <Progress value={labelScanProgress} />}
+                {labelScanMessage && <small className="label-scan-message">{labelScanMessage}</small>}
+              </section>
               <div className="form-grid two">
                 <Field label="Nome">
                   <Input

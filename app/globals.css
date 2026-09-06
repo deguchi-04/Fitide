@@ -505,3 +505,44 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
   .fast-dialog { width: 100%; border-width: 1px 0 0; border-radius: 22px 22px 0 0; padding: 22px 18px max(22px,env(safe-area-inset-bottom)); }
   .fast-dialog-fields { grid-template-columns: 1fr 1fr; }
 }
+
+/* Nutrition-label camera reader */
+.label-scanner { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: center; margin-bottom: 18px; padding: 15px; border: 1px solid #b8d8e4; border-radius: 15px; background: linear-gradient(135deg,#eef8fb,#f8fbfc); }
+.label-scanner-copy { min-width: 0; display: flex; align-items: center; gap: 11px; }
+.label-scanner-copy > span { width: 40px; height: 40px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 12px; background: #d9eff7; color: #087fb7; }
+.label-scanner-copy svg { width: 20px; }
+.label-scanner-copy > div { min-width: 0; display: grid; gap: 3px; }
+.label-scanner-copy small { color: var(--muted-foreground); line-height: 1.35; }
+.label-photo-input { position: fixed; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.label-scanner [data-slot='progress'] { grid-column: 1 / -1; height: 6px; }
+.label-scan-message { grid-column: 1 / -1; color: var(--muted-foreground); font-weight: 700; }
+.label-scanner.done { border-color: #9fd6bd; background: #eff9f4; }
+.label-scanner.done .label-scan-message { color: #16734f; }
+.label-scanner.error { border-color: #e5b8b1; background: #fff5f3; }
+.label-scanner.error .label-scan-message { color: #a63d32; }
+
+/* High-contrast Judo surfaces in the global dark theme. */
+:root[data-theme='dark'] .technique-grid article,
+:root[data-theme='dark'] .tokui-list button,
+:root[data-theme='dark'] .learning-builder { border-color: #2b5061; background: #102733; color: #eef8fb; }
+:root[data-theme='dark'] .technique-select,
+:root[data-theme='dark'] .technique-select strong,
+:root[data-theme='dark'] .tokui-list button,
+:root[data-theme='dark'] .tokui-list button strong,
+:root[data-theme='dark'] .learning-list strong { color: #eef8fb; }
+:root[data-theme='dark'] .technique-select small,
+:root[data-theme='dark'] .tokui-list button small,
+:root[data-theme='dark'] .learning-list p { color: #a7bec8; }
+:root[data-theme='dark'] .technique-video,
+:root[data-theme='dark'] .media-chip { color: #61cdf2; }
+:root[data-theme='dark'] .label-scanner { border-color: #2b5264; background: linear-gradient(135deg,#102b38,#0f222d); }
+:root[data-theme='dark'] .label-scanner-copy > span { background: #183f50; color: #61cdf2; }
+:root[data-theme='dark'] .label-scanner.done { border-color: #2f7158; background: #112f27; }
+:root[data-theme='dark'] .label-scanner.done .label-scan-message { color: #72dbae; }
+:root[data-theme='dark'] .label-scanner.error { border-color: #70433e; background: #30201f; }
+:root[data-theme='dark'] .label-scanner.error .label-scan-message { color: #ff9a8e; }
+
+@media (max-width: 620px) {
+  .label-scanner { grid-template-columns: 1fr; }
+  .label-scanner > button { width: 100%; }
+}
