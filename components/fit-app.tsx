@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import ReactCrop, { type PercentCrop, type PixelCrop } from 'react-image-crop';
 import {
   Activity as ActivityIcon,
   Apple,
@@ -399,10 +400,10 @@ function formatFastDuration(totalSeconds: number) {
 }
 
 const labelFieldAliases: Partial<Record<keyof Nutrients, string[]>> = {
-  protein: ['proteina', 'proteinas', 'protein'],
-  carbs: ['hidratos de carbono', 'hidratos', 'carboidratos', 'carboidrato', 'carbohydrate'],
-  fat: ['lipidos', 'lipido', 'gorduras totais', 'gordura total', 'gordura', 'fat'],
-  fiber: ['fibra alimentar', 'fibras alimentares', 'fibra', 'fiber', 'fibre'],
+  protein: ['proteina', 'proteinas', 'protein', 'proteines'],
+  carbs: ['hidratos de carbono', 'hidratos', 'h carbono', 'carboidratos', 'carboidrato', 'carbohydrate', 'carbohydrates', 'glucides'],
+  fat: ['lipidos', 'lipido', 'gorduras totais', 'gordura total', 'gordura', 'grasas', 'grasa', 'fat', 'matieres grasses'],
+  fiber: ['fibra alimentar', 'fibras alimentares', 'fibra', 'fiber', 'fibre', 'fibres alimentaires'],
   calcium: ['calcio', 'calcium'],
   iron: ['ferro', 'iron'],
   vitaminC: ['vitamina c', 'vitamin c'],
@@ -422,6 +423,15 @@ function numericValues(value: string) {
 function parseNutritionLabel(text: string): Partial<Record<keyof Nutrients, number>> {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const result: Partial<Record<keyof Nutrients, number>> = {};
+  const nutrientMaximums: Partial<Record<keyof Nutrients, number>> = {
+    protein: 100,
+    carbs: 100,
+    fat: 100,
+    fiber: 100,
+    calcium: 5000,
+    iron: 500,
+    vitaminC: 5000,
+  };
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -440,11 +450,127 @@ function parseNutritionLabel(text: string): Partial<Record<keyof Nutrients, numb
       if (key === 'fat' && /(saturad|trans)/.test(normalized)) continue;
       if (key === 'carbs' && /(acucar|sugar)/.test(normalized)) continue;
       const values = numericValues(candidate);
-      if (values.length) result[key] = values[0];
+      const value = values.find((item) => item <= (nutrientMaximums[key] ?? Number.POSITIVE_INFINITY));
+      if (value !== undefined) result[key] = value;
     }
   }
 
+  if (result.calories === undefined) {
+    const kcal = [...text.matchAll(/(\d{1,4}(?:[.,]\d{1,2})?)\s*k\s*c\s*a\s*l/gi)]
+      .map((match) => parseLabelNumber(match[1]))
+      .find((value) => value !== undefined && value > 0 && value <= 1000);
+    if (kcal !== undefined) result.calories = kcal;
+  }
+
   return result;
+}
+
+async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
+  const scaleX = image.naturalWidth / image.width;
+  const scaleY = image.naturalHeight / image.height;
+  const sourceX = Math.max(0, Math.round(crop.x * scaleX));
+  const sourceY = Math.max(0, Math.round(crop.y * scaleY));
+  const sourceWidth = Math.min(image.naturalWidth - sourceX, Math.max(1, Math.round(crop.width * scaleX)));
+  const sourceHeight = Math.min(image.naturalHeight - sourceY, Math.max(1, Math.round(crop.height * scaleY)));
+  const outputScale = Math.min(2, 2200 / sourceWidth, 3000 / sourceHeight);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(sourceWidth * outputScale));
+  canvas.height = Math.max(1, Math.round(sourceHeight * outputScale));
+  const context = canvas.getContext('2d', { willReadFrequently: false });
+  if (!context) throw new Error('canvas-unavailable');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.filter = 'grayscale(100%)';
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(
+    image,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+  const histogram = new Uint32Array(256);
+  let luminanceSum = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    const luminance = Math.round((pixels[index] * 0.299) + (pixels[index + 1] * 0.587) + (pixels[index + 2] * 0.114));
+    histogram[luminance] += 1;
+    luminanceSum += luminance;
+  }
+  const pixelCount = canvas.width * canvas.height;
+  let backgroundWeight = 0;
+  let backgroundSum = 0;
+  let bestVariance = 0;
+  let threshold = 150;
+  for (let level = 0; level < 256; level += 1) {
+    backgroundWeight += histogram[level];
+    if (!backgroundWeight) continue;
+    const foregroundWeight = pixelCount - backgroundWeight;
+    if (!foregroundWeight) break;
+    backgroundSum += level * histogram[level];
+    const backgroundMean = backgroundSum / backgroundWeight;
+    const foregroundMean = (luminanceSum - backgroundSum) / foregroundWeight;
+    const variance = backgroundWeight * foregroundWeight * ((backgroundMean - foregroundMean) ** 2);
+    if (variance > bestVariance) {
+      bestVariance = variance;
+      threshold = level;
+    }
+  }
+  let darkPixelCount = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    const value = pixels[index] < threshold ? 0 : 255;
+    if (value === 0) darkPixelCount += 1;
+    pixels[index] = value;
+    pixels[index + 1] = value;
+    pixels[index + 2] = value;
+    pixels[index + 3] = 255;
+  }
+  if (darkPixelCount / pixelCount > 0.55) {
+    for (let index = 0; index < pixels.length; index += 4) {
+      const value = pixels[index] === 0 ? 255 : 0;
+      pixels[index] = value;
+      pixels[index + 1] = value;
+      pixels[index + 2] = value;
+    }
+  }
+  const clearPixel = (x: number, y: number) => {
+    const index = ((y * canvas.width) + x) * 4;
+    pixels[index] = 255;
+    pixels[index + 1] = 255;
+    pixels[index + 2] = 255;
+  };
+  for (let y = 0; y < canvas.height; y += 1) {
+    let darkPixels = 0;
+    for (let x = 0; x < canvas.width; x += 1) {
+      if (pixels[((y * canvas.width) + x) * 4] === 0) darkPixels += 1;
+    }
+    if (darkPixels / canvas.width > 0.48) {
+      for (let lineY = Math.max(0, y - 2); lineY <= Math.min(canvas.height - 1, y + 2); lineY += 1) {
+        for (let x = 0; x < canvas.width; x += 1) clearPixel(x, lineY);
+      }
+    }
+  }
+  for (let x = 0; x < canvas.width; x += 1) {
+    let darkPixels = 0;
+    for (let y = 0; y < canvas.height; y += 1) {
+      if (pixels[((y * canvas.width) + x) * 4] === 0) darkPixels += 1;
+    }
+    if (darkPixels / canvas.height > 0.48) {
+      for (let lineX = Math.max(0, x - 2); lineX <= Math.min(canvas.width - 1, x + 2); lineX += 1) {
+        for (let y = 0; y < canvas.height; y += 1) clearPixel(lineX, y);
+      }
+    }
+  }
+  context.putImageData(imageData, 0, 0);
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('crop-failed'))), 'image/jpeg', 0.94);
+  });
 }
 
 function youtubeIdFromUrl(url: string) {
@@ -1650,6 +1776,10 @@ function MealDialog({
   const [assistantMessage, setAssistantMessage] = useState('');
   const [assistantOpen, setAssistantOpen] = useState(false);
   const labelPhotoInput = useRef<HTMLInputElement>(null);
+  const labelCropImage = useRef<HTMLImageElement>(null);
+  const [labelPhotoUrl, setLabelPhotoUrl] = useState('');
+  const [labelCrop, setLabelCrop] = useState<PercentCrop>({ unit: '%', x: 7, y: 18, width: 86, height: 62 });
+  const [completedLabelCrop, setCompletedLabelCrop] = useState<PixelCrop>();
   const [labelScanStatus, setLabelScanStatus] = useState<'idle' | 'reading' | 'done' | 'error'>('idle');
   const [labelScanProgress, setLabelScanProgress] = useState(0);
   const [labelScanMessage, setLabelScanMessage] = useState('');
@@ -1695,6 +1825,12 @@ function MealDialog({
         ? grams * liquidDensity(resolvedFood.name)
         : grams
     : grams;
+
+  useViewportLock(Boolean(labelPhotoUrl));
+
+  useEffect(() => () => {
+    if (labelPhotoUrl) URL.revokeObjectURL(labelPhotoUrl);
+  }, [labelPhotoUrl]);
 
   function catalogAmountToGrams(food: FoodCatalogItem, amount: number, amountUnit: QuantityMode) {
     if (amountUnit === 'unit') return amount * averageUnitGrams(food.name);
@@ -1831,13 +1967,28 @@ function MealDialog({
     setSaveToCatalog(true);
   }
 
-  async function scanNutritionLabel(file: File) {
+  function closeLabelCrop() {
+    setLabelPhotoUrl('');
+    setCompletedLabelCrop(undefined);
+    if (labelPhotoInput.current) labelPhotoInput.current.value = '';
+  }
+
+  function openLabelCrop(file: File) {
+    setLabelScanStatus('idle');
+    setLabelScanProgress(0);
+    setLabelScanMessage('');
+    setLabelCrop({ unit: '%', x: 7, y: 18, width: 86, height: 62 });
+    setCompletedLabelCrop(undefined);
+    setLabelPhotoUrl(URL.createObjectURL(file));
+  }
+
+  async function scanNutritionLabel(image: Blob) {
     setLabelScanStatus('reading');
     setLabelScanProgress(0);
     setLabelScanMessage('A preparar a leitura…');
     let worker: Awaited<ReturnType<(typeof import('tesseract.js'))['createWorker']>> | undefined;
     try {
-      const { createWorker } = await import('tesseract.js');
+      const { createWorker, PSM } = await import('tesseract.js');
       worker = await createWorker(['por', 'eng'], undefined, {
         logger: ({ status, progress }: { status: string; progress: number }) => {
           const percent = Math.round((progress || 0) * 100);
@@ -1845,7 +1996,12 @@ function MealDialog({
           setLabelScanMessage(status === 'recognizing text' ? `A ler o rótulo… ${percent}%` : 'A preparar o leitor…');
         },
       });
-      const { data } = await worker.recognize(file, { rotateAuto: true });
+      await worker.setParameters({
+        tessedit_pageseg_mode: PSM.SINGLE_COLUMN,
+        preserve_interword_spaces: '1',
+        user_defined_dpi: '300',
+      });
+      const { data } = await worker.recognize(image, { rotateAuto: true });
       const recognized = parseNutritionLabel(data.text);
       const entries = Object.entries(recognized) as Array<[keyof Nutrients, number]>;
       if (!entries.length) throw new Error('no-values');
@@ -1859,6 +2015,29 @@ function MealDialog({
     } finally {
       await worker?.terminate().catch(() => undefined);
       if (labelPhotoInput.current) labelPhotoInput.current.value = '';
+    }
+  }
+
+  async function scanSelectedLabelArea(useWholePhoto = false) {
+    const image = labelCropImage.current;
+    if (!image) return;
+    const crop = useWholePhoto
+      ? { unit: 'px' as const, x: 0, y: 0, width: image.width, height: image.height }
+      : completedLabelCrop;
+    if (!crop || crop.width < 40 || crop.height < 40) {
+      setLabelScanStatus('error');
+      setLabelScanMessage('Seleciona uma área maior da tabela nutricional.');
+      return;
+    }
+    try {
+      setLabelScanStatus('reading');
+      setLabelScanMessage('A preparar a área selecionada…');
+      const prepared = await prepareNutritionCrop(image, crop);
+      closeLabelCrop();
+      await scanNutritionLabel(prepared);
+    } catch {
+      setLabelScanStatus('error');
+      setLabelScanMessage('Não consegui preparar o recorte. Tenta tirar a foto novamente.');
     }
   }
 
@@ -2167,7 +2346,7 @@ function MealDialog({
                   capture="environment"
                   onChange={(event) => {
                     const file = event.target.files?.[0];
-                    if (file) void scanNutritionLabel(file);
+                    if (file) openLabelCrop(file);
                   }}
                 />
                 <Button
@@ -2177,11 +2356,72 @@ function MealDialog({
                   onClick={() => labelPhotoInput.current?.click()}
                 >
                   {labelScanStatus === 'reading' ? <LoaderCircle className="spin" /> : <Camera />}
-                  {labelScanStatus === 'reading' ? 'A analisar…' : labelScanStatus === 'done' ? 'Tirar outra foto' : 'Fotografar rótulo'}
+                  {labelScanStatus === 'reading' ? 'A analisar…' : labelScanStatus === 'done' ? 'Ler outro rótulo' : 'Fotografar rótulo'}
                 </Button>
                 {labelScanStatus === 'reading' && <Progress value={labelScanProgress} />}
                 {labelScanMessage && <small className="label-scan-message">{labelScanMessage}</small>}
               </section>
+              {labelPhotoUrl && (
+                <OverlayPortal>
+                  <div className="label-crop-backdrop" role="presentation">
+                    <section className="label-crop-dialog" role="dialog" aria-modal="true" aria-labelledby="label-crop-title">
+                      <header>
+                        <div>
+                          <p className="eyebrow">RECORTAR RÓTULO</p>
+                          <h2 id="label-crop-title">Seleciona só a tabela nutricional</h2>
+                        </div>
+                        <Button type="button" variant="ghost" size="icon" aria-label="Cancelar recorte" onClick={closeLabelCrop}><X /></Button>
+                      </header>
+                      <p className="label-crop-help">Arrasta a caixa e os cantos até incluir os nomes e a coluna “por 100 g/ml”.</p>
+                      <div className="label-crop-stage">
+                        <ReactCrop
+                          crop={labelCrop}
+                          onChange={(_, percentCrop) => setLabelCrop(percentCrop)}
+                          onComplete={(pixelCrop) => setCompletedLabelCrop(pixelCrop)}
+                          keepSelection
+                          ruleOfThirds
+                          minWidth={70}
+                          minHeight={70}
+                          ariaLabels={{
+                            cropArea: 'Área da tabela nutricional',
+                            nwDragHandle: 'Canto superior esquerdo',
+                            nDragHandle: 'Lado superior',
+                            neDragHandle: 'Canto superior direito',
+                            eDragHandle: 'Lado direito',
+                            seDragHandle: 'Canto inferior direito',
+                            sDragHandle: 'Lado inferior',
+                            swDragHandle: 'Canto inferior esquerdo',
+                            wDragHandle: 'Lado esquerdo',
+                          }}
+                        >
+                          <img
+                            ref={labelCropImage}
+                            src={labelPhotoUrl}
+                            alt="Foto do rótulo para recortar"
+                            onLoad={(event) => {
+                              const image = event.currentTarget;
+                              setCompletedLabelCrop({
+                                unit: 'px',
+                                x: image.width * 0.07,
+                                y: image.height * 0.18,
+                                width: image.width * 0.86,
+                                height: image.height * 0.62,
+                              });
+                            }}
+                          />
+                        </ReactCrop>
+                      </div>
+                      <footer>
+                        <Button type="button" variant="ghost" disabled={labelScanStatus === 'reading'} onClick={() => void scanSelectedLabelArea(true)}>Usar foto inteira</Button>
+                        <Button type="button" disabled={labelScanStatus === 'reading'} onClick={() => void scanSelectedLabelArea()}>
+                          {labelScanStatus === 'reading' ? <LoaderCircle className="spin" /> : <Camera />}
+                          {labelScanStatus === 'reading' ? 'A preparar…' : 'Ler esta área'}
+                        </Button>
+                      </footer>
+                    </section>
+                  </div>
+                </OverlayPortal>
+              )}
               <div className="form-grid two">
                 <Field label="Nome">
                   <Input

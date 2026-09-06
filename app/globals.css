@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
+@import 'react-image-crop/dist/ReactCrop.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -520,6 +521,19 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 .label-scanner.done .label-scan-message { color: #16734f; }
 .label-scanner.error { border-color: #e5b8b1; background: #fff5f3; }
 .label-scanner.error .label-scan-message { color: #a63d32; }
+.label-crop-backdrop { position: fixed; inset: 0; z-index: 180; display: grid; place-items: center; padding: 16px; background: rgba(3,15,22,.82); backdrop-filter: blur(8px); }
+.label-crop-dialog { width: min(760px,100%); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #2f5b6e; border-radius: 22px; background: #0d202b; color: #f4fbfd; box-shadow: 0 30px 100px rgba(0,0,0,.55); }
+.label-crop-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px 20px 8px; }
+.label-crop-dialog h2 { margin: 0; font-size: clamp(20px,4vw,27px); letter-spacing: -.035em; }
+.label-crop-dialog header button { color: #f4fbfd; }
+.label-crop-help { margin: 0; padding: 0 20px 14px; color: #a9c4cf; font-size: 14px; }
+.label-crop-stage { min-height: 0; flex: 1; display: grid; place-items: center; overflow: auto; padding: 10px; background: #061118; overscroll-behavior: contain; }
+.label-crop-stage .ReactCrop { max-width: 100%; }
+.label-crop-stage img { display: block; max-width: 100%; max-height: 66dvh; object-fit: contain; }
+.label-crop-stage .ReactCrop__crop-selection { border: 2px solid #ff684f; box-shadow: 0 0 0 9999em rgba(2,10,15,.62); }
+.label-crop-stage .ReactCrop__drag-handle { width: 24px; height: 24px; border: 3px solid #fff; border-radius: 50%; background: #ff684f; }
+.label-crop-dialog > footer { display: grid; grid-template-columns: 1fr 1.35fr; gap: 10px; padding: 14px 18px max(14px,env(safe-area-inset-bottom)); }
+.label-crop-dialog > footer button { min-height: 48px; }
 
 /* High-contrast Judo surfaces in the global dark theme. */
 :root[data-theme='dark'] .technique-grid article,
@@ -545,4 +559,7 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 @media (max-width: 620px) {
   .label-scanner { grid-template-columns: 1fr; }
   .label-scanner > button { width: 100%; }
+  .label-crop-backdrop { align-items: stretch; padding: 0; }
+  .label-crop-dialog { width: 100%; max-height: 100dvh; border-width: 0; border-radius: 0; }
+  .label-crop-stage img { max-height: 70dvh; }
 }
