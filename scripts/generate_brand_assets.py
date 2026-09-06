@@ -53,6 +53,7 @@ def save_web_icons(logo: Image.Image) -> None:
 
 def save_android_icons(logo: Image.Image) -> None:
     densities = {
+        "ldpi": (36, 81),
         "mdpi": (48, 108),
         "hdpi": (72, 162),
         "xhdpi": (96, 216),
@@ -62,6 +63,7 @@ def save_android_icons(logo: Image.Image) -> None:
 
     for density, (legacy_size, foreground_size) in densities.items():
         target = ANDROID_RES / f"mipmap-{density}"
+        target.mkdir(parents=True, exist_ok=True)
 
         legacy = Image.new("RGBA", (legacy_size, legacy_size), NAVY)
         legacy.alpha_composite(contain(logo, legacy.size, 0.76))
