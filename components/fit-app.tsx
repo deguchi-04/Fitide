@@ -56,6 +56,7 @@ import {
 } from 'recharts';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
+import { Camera as CapacitorCamera } from '@capacitor/camera';
 import { HealthFitness } from '@capacitor/health-fitness';
 import { Button } from '@/components/ui/button';
 import {
@@ -492,7 +493,7 @@ async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
   const sourceY = Math.max(0, Math.round(crop.y * scaleY));
   const sourceWidth = Math.min(image.naturalWidth - sourceX, Math.max(1, Math.round(crop.width * scaleX)));
   const sourceHeight = Math.min(image.naturalHeight - sourceY, Math.max(1, Math.round(crop.height * scaleY)));
-  const outputScale = Math.min(2.5, 1600 / sourceWidth, 2200 / sourceHeight);
+  const outputScale = Math.min(2, 1000 / sourceWidth, 1400 / sourceHeight);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sourceWidth * outputScale));
   canvas.height = Math.max(1, Math.round(sourceHeight * outputScale));
@@ -588,28 +589,36 @@ async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
     }
   }
   context.putImageData(imageData, 0, 0);
-  return new Promise<Blob>((resolve, reject) => {
+  const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('crop-failed'))), 'image/jpeg', 0.94);
   });
+  canvas.width = 1;
+  canvas.height = 1;
+  return blob;
 }
 
 async function prepareNutritionPreview(file: File) {
   if (typeof createImageBitmap !== 'function') return file;
-  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const bitmap = await createImageBitmap(file, {
+    imageOrientation: 'from-image',
+    resizeWidth: 1280,
+    resizeQuality: 'high',
+  });
   try {
-    const previewScale = Math.min(1, 1800 / bitmap.width, 1800 / bitmap.height);
-    if (previewScale >= 1) return file;
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * previewScale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * previewScale));
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('canvas-unavailable');
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    return await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('preview-failed'))), 'image/jpeg', 0.9);
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('preview-failed'))), 'image/jpeg', 0.82);
     });
+    canvas.width = 1;
+    canvas.height = 1;
+    return blob;
   } finally {
     bitmap.close();
   }
@@ -2046,6 +2055,38 @@ function MealDialog({
     }
   }
 
+  async function takeNativeLabelPhoto() {
+    setLabelScanStatus('reading');
+    setLabelScanProgress(0);
+    setLabelScanMessage('A abrir a câmara…');
+    try {
+      const photo = await CapacitorCamera.takePhoto({
+        quality: 82,
+        targetWidth: 1280,
+        targetHeight: 1280,
+        correctOrientation: true,
+        saveToGallery: false,
+        editable: 'no',
+        includeMetadata: true,
+      });
+      if (!photo.webPath) throw new Error('photo-unavailable');
+      const response = await fetch(photo.webPath);
+      if (!response.ok) throw new Error('photo-unavailable');
+      const blob = await response.blob();
+      const format = photo.metadata?.format ?? 'jpeg';
+      const extension = format === 'png' ? 'png' : 'jpg';
+      await openLabelCrop(new File([blob], `rotulo.${extension}`, { type: blob.type || `image/${format}` }));
+    } catch (error) {
+      if (error instanceof Error && /cancel/i.test(error.message)) {
+        setLabelScanStatus('idle');
+        setLabelScanMessage('Fotografia cancelada.');
+        return;
+      }
+      setLabelScanStatus('error');
+      setLabelScanMessage('A câmara não conseguiu devolver a foto. Tenta novamente.');
+    }
+  }
+
   async function scanNutritionLabel(image: Blob) {
     const runId = labelScanRun.current + 1;
     labelScanRun.current = runId;
@@ -2112,6 +2153,7 @@ function MealDialog({
       setLabelScanMessage('A preparar a área selecionada…');
       const prepared = await prepareNutritionCrop(image, crop);
       closeLabelCrop();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       await scanNutritionLabel(prepared);
     } catch {
       setLabelScanStatus('error');
@@ -2431,7 +2473,10 @@ function MealDialog({
                   type="button"
                   variant="outline"
                   disabled={labelScanStatus === 'reading'}
-                  onClick={() => labelPhotoInput.current?.click()}
+                  onClick={() => {
+                    if (Capacitor.isNativePlatform()) void takeNativeLabelPhoto();
+                    else labelPhotoInput.current?.click();
+                  }}
                 >
                   {labelScanStatus === 'reading' ? <LoaderCircle className="spin" /> : <Camera />}
                   {labelScanStatus === 'reading' ? 'A analisar…' : labelScanStatus === 'done' ? 'Ler outro rótulo' : 'Fotografar rótulo'}
