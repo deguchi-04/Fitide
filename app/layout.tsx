@@ -16,6 +16,13 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.SITE_URL ?? 'https://forma-pessoal.thaidy-deguchi.chatgpt.site'),
   title: 'Fitide — nutrição e treino',
   description: 'O teu painel pessoal de dieta, treino, jejum e progresso.',
+  icons: {
+    icon: [
+      { url: '/fitide-icon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/fitide-icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: [{ url: '/fitide-icon-192.png', sizes: '192x192', type: 'image/png' }],
+  },
   openGraph: {
     title: 'Fitide — nutrição e treino',
     description: 'Nutrição, treino e progresso num só lugar.',

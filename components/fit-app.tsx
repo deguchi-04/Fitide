@@ -346,12 +346,7 @@ function formatLiters(value: number) {
 }
 
 function FitideLogo() {
-  return (
-    <svg viewBox="0 0 32 32" aria-hidden="true">
-      <path className="logo-fill" d="M7 25V8h18l-3 5H13v3h7l-3 5h-4v4H7Z" />
-      <path className="logo-accent" d="m19 25 6-6m-4 0h4v4" />
-    </svg>
-  );
+  return <img src="/fitide-logo-v2.png" alt="" aria-hidden="true" />;
 }
 
 function localDateKey(date = new Date()) {
