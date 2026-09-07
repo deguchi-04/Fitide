@@ -75,6 +75,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import {
+  activityIntensity,
   bmr,
   calorieDeficit,
   exerciseCaloriesForDay,
@@ -185,15 +186,15 @@ const muscleOptions = [
   { value: 'waist', label: 'Abdominais' },
 ];
 const activityPresets = [
-  { name: 'Musculação', met: 5 },
-  { name: 'Judô', met: 11.3 },
-  { name: 'Futebol casual', met: 7 },
-  { name: 'Futebol competitivo', met: 9.5 },
-  { name: 'Corrida', met: 8 },
-  { name: 'Caminhada rápida', met: 4.8 },
-  { name: 'Bicicleta', met: 6.8 },
-  { name: 'Natação', met: 6 },
-  { name: 'Outro', met: 5 },
+  { name: 'Musculação', intensity: 2 },
+  { name: 'Judô', intensity: 3 },
+  { name: 'Futebol casual', intensity: 3 },
+  { name: 'Futebol competitivo', intensity: 4 },
+  { name: 'Corrida', intensity: 3 },
+  { name: 'Caminhada rápida', intensity: 1 },
+  { name: 'Bicicleta', intensity: 2 },
+  { name: 'Natação', intensity: 3 },
+  { name: 'Outro', intensity: 2 },
 ];
 
 function normalizeText(value: string) {
@@ -361,6 +362,27 @@ function FitideLogo() {
 function localDateKey(date = new Date()) {
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function isScheduledForDate(
+  item: { days?: number[]; specificDate?: string },
+  date: string,
+  unscheduledIsDaily = false,
+) {
+  if (item.specificDate) return item.specificDate === date;
+  if (!item.days?.length) return unscheduledIsDaily;
+  return item.days.includes(new Date(`${date}T12:00:00`).getDay());
+}
+
+function scheduleLabel(item: { days?: number[]; specificDate?: string }) {
+  if (item.specificDate) {
+    return `1 dia · ${new Date(`${item.specificDate}T12:00:00`).toLocaleDateString('pt-PT', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    })}`;
+  }
+  return item.days?.length ? item.days.map((day) => fullDayNames[day]).join(', ') : 'Sem dias agendados';
 }
 
 function localTimeValue(date = new Date()) {
@@ -675,7 +697,10 @@ function mergeState(saved: Partial<AppState>): AppState {
     ...saved,
     profile: { ...defaultState.profile, ...saved.profile },
     goals: { ...defaultState.goals, ...saved.goals },
-    activities: saved.activities ?? [],
+    activities: (saved.activities ?? []).map((activity) => ({
+      ...activity,
+      intensity: activityIntensity(activity),
+    })),
     activityCheckIns: saved.activityCheckIns ?? [],
     meals: saved.meals ?? [],
     customFoods: saved.customFoods ?? [],
@@ -759,17 +784,28 @@ export default function FitApp() {
       const start = new Date(`${date}T00:00:00`);
       const end = new Date(start);
       end.setDate(end.getDate() + 1);
-      const readMetric = (variable: string, operation: 'SUM' | 'AVERAGE') =>
-        queryHealthMetric(variable, operation, start, end).catch(() => undefined);
-      const [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent] = await Promise.all([
-        readMetric('STEPS', 'SUM'),
-        readMetric('CALORIES_BURNED', 'SUM'),
-        readMetric('HEART_RATE', 'AVERAGE'),
-        readMetric('SLEEP', 'SUM'),
-        readMetric('BODY_FAT_PERCENTAGE', 'AVERAGE'),
-      ]);
+      const metricRequests = [
+        ['STEPS', 'SUM'],
+        ['CALORIES_BURNED', 'SUM'],
+        ['HEART_RATE', 'AVERAGE'],
+        ['SLEEP', 'SUM'],
+        ['BODY_FAT_PERCENTAGE', 'AVERAGE'],
+      ] as const;
+      const metricValues: Array<number | undefined> = [];
+      const metricErrors: unknown[] = [];
+      for (const [variable, operation] of metricRequests) {
+        try {
+          metricValues.push(await queryHealthMetric(variable, operation, start, end));
+        } catch (error) {
+          metricErrors.push(error);
+          metricValues.push(undefined);
+        }
+      }
+      const [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent] = metricValues;
       if ([steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent].every((metric) => metric === undefined)) {
-        throw new Error('O Health Connect não devolveu dados. Confirma as permissões e tenta novamente.');
+        throw new Error(metricErrors.length
+          ? 'A Fitide ainda não tem acesso aos dados. Em Health Connect, abre “Permissões de apps”, escolhe Fitide e permite os dados pedidos.'
+          : 'Não encontrei registos de hoje no Health Connect. Confirma se a app do relógio já sincronizou os dados.');
       }
       const snapshot: HealthSnapshot = {
         date,
@@ -1100,7 +1136,7 @@ export default function FitApp() {
       />
     );
     if (targetPage === 'progress') return <ProgressPage state={state} setState={setState} />;
-    return <SettingsPage state={state} setState={setState} onReset={resetProfile} healthSyncStatus={healthSyncStatus} healthSyncMessage={healthSyncMessage} onHealthSync={() => syncHealthConnect({ requestPermissions: !state.healthSyncEnabled })} />;
+    return <SettingsPage state={state} setState={setState} onReset={resetProfile} healthSyncStatus={healthSyncStatus} healthSyncMessage={healthSyncMessage} onHealthSync={() => syncHealthConnect({ requestPermissions: true })} />;
   }
 
   return (
@@ -1475,17 +1511,16 @@ function TodayPage({
   const selectedDay = new Date(`${date}T12:00:00`).getDay();
   const isToday = date === localDateKey();
   const activePlan = state.workoutPlans
-    .filter((plan) => !plan.days?.length || plan.days.includes(selectedDay))
+    .filter((plan) => isScheduledForDate(plan, date, true))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'))[0];
   const scheduledActivities = state.activities
-    .filter((activity) => activity.days.includes(selectedDay))
+    .filter((activity) => isScheduledForDate(activity, date))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'));
   const checkInFor = (activityId: string, dateKey: string) =>
     state.activityCheckIns.find((entry) => entry.activityId === activityId && entry.date === dateKey);
   const effectiveActivitiesForDate = (dateKey: string) => {
-    const day = new Date(`${dateKey}T12:00:00`).getDay();
     return state.activities.filter((activity) =>
-      activity.days.includes(day) && checkInFor(activity.id, dateKey)?.status !== 'skipped',
+      isScheduledForDate(activity, dateKey) && checkInFor(activity.id, dateKey)?.status !== 'skipped',
     );
   };
   const selectedDateValue = new Date(`${date}T12:00:00`);
@@ -1494,10 +1529,11 @@ function TodayPage({
   const weeklyExercise = Array.from({ length: 7 }, (_, index) => {
     const day = new Date(weekStart);
     day.setDate(weekStart.getDate() + index);
-    return exerciseCaloriesForDay(state.profile, effectiveActivitiesForDate(localDateKey(day)), day.getDay());
+    const dayKey = localDateKey(day);
+    return exerciseCaloriesForDay(state.profile, effectiveActivitiesForDate(dayKey), day.getDay(), dayKey);
   }).reduce((sum, value) => sum + value, 0);
   const baseMaintenance = sedentaryTdee(state.profile);
-  const exerciseToday = Math.round(exerciseCaloriesForDay(state.profile, effectiveActivitiesForDate(date), selectedDay));
+  const exerciseToday = Math.round(exerciseCaloriesForDay(state.profile, effectiveActivitiesForDate(date), selectedDay, date));
   const weeklyMaintenance = Math.round(baseMaintenance + weeklyExercise / 7);
   const maintenance = Math.round(baseMaintenance + exerciseToday);
   const deficit = calorieDeficit(weeklyMaintenance, state.goals.calorieTarget);
@@ -1689,7 +1725,7 @@ function TodayPage({
               const checkIn = checkInFor(activity.id, date);
               return (
                 <div key={activity.id} className="attendance-row">
-                  <div><ActivityIcon /><span><strong>{activity.name}</strong><small>{activity.time ?? 'Hora por definir'} · {activity.minutes} min · MET {activity.met}</small></span></div>
+                  <div><ActivityIcon /><span><strong>{activity.name}</strong><small>{activity.time ?? 'Hora por definir'} · {activity.minutes} min · intensidade {activityIntensity(activity)}/5</small></span></div>
                   <div className="attendance-actions">
                     <button type="button" className={checkIn?.status === 'completed' ? 'selected completed' : ''} onClick={() => setActivityCheckIn(activity.id, 'completed')}><Check /> Fui</button>
                     <button type="button" className={checkIn?.status === 'skipped' ? 'selected skipped' : ''} onClick={() => setActivityCheckIn(activity.id, 'skipped')}><X /> Não fui</button>
@@ -1767,7 +1803,7 @@ function TodayPage({
               <div className="training-meta">
                 <span>{scheduledActivities[0].minutes} min</span>
                 <span>{scheduledActivities[0].time ?? 'Sem hora'}</span>
-                <span>MET {scheduledActivities[0].met}</span>
+                <span>Intensidade {activityIntensity(scheduledActivities[0])}/5</span>
               </div>
               <Button className="wide-button" onClick={() => onGo('workout')}>
                 <Dumbbell /> Ver treinos do dia
@@ -1800,10 +1836,18 @@ function TodayPage({
               </span>
               <span className="habit-badge">{Math.min(100, Math.round((water / state.goals.waterLiters) * 100))}%</span>
             </div>
-            <Progress value={(water / state.goals.waterLiters) * 100} />
+            <Progress className="water-progress" value={(water / state.goals.waterLiters) * 100} />
             <div className="water-custom">
               <Field label="Quantidade (ml)">
-                <NumberInput value={waterMl} min={50} max={2000} step="50" onChange={setWaterMl} />
+                <NumberInput
+                  value={waterMl}
+                  min={50}
+                  max={2000}
+                  step="50"
+                  ariaLabel="Quantidade de água"
+                  onChange={setWaterMl}
+                  onConfirm={(value) => onWater(value / 1000)}
+                />
               </Field>
               <div className="stepper">
               <Button
@@ -2917,8 +2961,8 @@ function MealDialog({
               value={`${Math.round(total.calories)} kcal`}
             />
             <MiniStat label="Proteína" value={`${total.protein} g`} />
+            <MiniStat label="Gorduras" value={`${total.fat} g`} />
             <MiniStat label="Hidratos" value={`${total.carbs} g`} />
-            <MiniStat label="Fibra" value={`${total.fiber} g`} />
           </div>
         </div>
         <footer>
@@ -2963,12 +3007,11 @@ function WorkoutPage({
   const [rest, setRest] = useState(0);
   const [demoExercise, setDemoExercise] = useState<WorkoutExercise | null>(null);
   const [setValues, setSetValues] = useState<Record<string, { load: number | ''; reps: number | '' }>>({});
-  const selectedDay = new Date(`${date}T12:00:00`).getDay();
   const duePlans = state.workoutPlans
-    .filter((plan) => !plan.days?.length || plan.days.includes(selectedDay))
+    .filter((plan) => isScheduledForDate(plan, date, true))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'));
   const linkedActivityIds = new Set(duePlans.map((plan) => plan.activityId).filter(Boolean));
-  const dueActivities = state.activities.filter((activity) => activity.days.includes(selectedDay) && !linkedActivityIds.has(activity.id));
+  const dueActivities = state.activities.filter((activity) => isScheduledForDate(activity, date) && !linkedActivityIds.has(activity.id));
   const scheduleItems = [
     ...duePlans.map((plan) => ({ type: 'plan' as const, id: plan.id, time: plan.time, plan })),
     ...dueActivities.map((activity) => ({ type: 'activity' as const, id: activity.id, time: activity.time, activity })),
@@ -3229,7 +3272,7 @@ function ActivityScheduleCard({
       <CardContent>
         <div className="scheduled-activity-meta">
           <span><TimerReset /> {activity.minutes} min</span>
-          <span><Flame /> MET {activity.met}</span>
+          <span><Flame /> Intensidade {activityIntensity(activity)}/5</span>
         </div>
         {onOpenJudo && <Button size="lg" className="wide-button" onClick={onOpenJudo}><BookOpen /> Abrir área de judô</Button>}
       </CardContent>
@@ -4261,8 +4304,15 @@ function pickHealthValues(payload: string | undefined): number[] {
       if (!value || typeof value !== 'object') return;
       const record = value as Record<string, unknown>;
       const preferred = ['y', 'value', 'Value', 'sum', 'Sum', 'average', 'Average', 'total', 'Total'];
-      const key = preferred.find((candidate) => typeof record[candidate] === 'number');
-      if (key) values.push(record[key] as number);
+      const key = preferred.find((candidate) => {
+        const candidateValue = record[candidate];
+        return typeof candidateValue === 'number'
+          || (typeof candidateValue === 'string' && candidateValue.trim() !== '' && Number.isFinite(Number(candidateValue.replace(',', '.'))));
+      });
+      if (key) {
+        const found = record[key];
+        values.push(typeof found === 'number' ? found : Number(String(found).replace(',', '.')));
+      }
       else Object.values(record).forEach(visit);
     };
     if (typeof parsed === 'number') return [parsed];
@@ -4315,7 +4365,7 @@ function HealthConnectPanel({
         <div className="round-icon health"><HeartPulse /></div>
         <div>
           <strong>Health Connect</strong>
-          <p>Importa do relógio passos, calorias ativas, ritmo cardíaco, sono e gordura corporal. Depois de ligado, sincroniza automaticamente a cada 15 minutos e ao voltar à app.</p>
+          <p>Importa do relógio passos, calorias, ritmo cardíaco, sono e gordura corporal. A app do relógio estar ligada não autoriza automaticamente a Fitide: permite também a Fitide em “Permissões de apps”. Depois disso, sincroniza a cada 15 minutos e ao voltar à app.</p>
           {latest && <small>Última sincronização: {new Date(latest.syncedAt).toLocaleString('pt-PT')} · {latest.steps?.toLocaleString('pt-PT') ?? '—'} passos</small>}
           {message && <small className={status === 'error' ? 'health-error' : ''}>{message}</small>}
           <div className="health-actions">
@@ -4349,8 +4399,10 @@ function SettingsPage({
   const [activityPreset, setActivityPreset] = useState('Musculação');
   const [activityName, setActivityName] = useState('Musculação');
   const [minutes, setMinutes] = useState(60);
-  const [met, setMet] = useState(5);
+  const [intensity, setIntensity] = useState(2);
   const [days, setDays] = useState<number[]>([]);
+  const [scheduleMode, setScheduleMode] = useState<'routine' | 'single'>('routine');
+  const [singleDate, setSingleDate] = useState(localDateKey());
   const [activityTime, setActivityTime] = useState('18:00');
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
   const [split, setSplit] = useState('full_body');
@@ -4382,18 +4434,21 @@ function SettingsPage({
     setActivityPreset('Musculação');
     setActivityName('Musculação');
     setMinutes(60);
-    setMet(5);
+    setIntensity(2);
     setDays([]);
+    setScheduleMode('routine');
+    setSingleDate(localDateKey());
     setActivityTime('18:00');
   }
   function saveActivity() {
-    if (!activityName.trim() || !days.length) return;
+    if (!activityName.trim() || (scheduleMode === 'routine' ? !days.length : !singleDate)) return;
     const activity: Activity = {
       id: editingActivityId ?? uid(),
       name: activityName.trim(),
-      days,
+      days: scheduleMode === 'routine' ? days : [],
+      specificDate: scheduleMode === 'single' ? singleDate : undefined,
       minutes,
-      met,
+      intensity,
       time: activityTime,
     };
     const nextActivities = editingActivityId
@@ -4405,7 +4460,7 @@ function SettingsPage({
       ...current,
       activities: nextActivities,
       workoutPlans: current.workoutPlans.map((plan) => plan.activityId === activity.id
-        ? { ...plan, days: [...activity.days], time: activity.time }
+        ? { ...plan, days: [...activity.days], specificDate: activity.specificDate, time: activity.time }
         : plan),
       goals: nextGoals,
     }));
@@ -4417,8 +4472,10 @@ function SettingsPage({
     setActivityPreset(preset?.name ?? (normalizeText(activity.name).includes('musculacao') ? 'Musculação' : 'Outro'));
     setActivityName(activity.name);
     setMinutes(activity.minutes);
-    setMet(activity.met);
+    setIntensity(activityIntensity(activity));
     setDays([...activity.days]);
+    setScheduleMode(activity.specificDate ? 'single' : 'routine');
+    setSingleDate(activity.specificDate ?? localDateKey());
     setActivityTime(activity.time ?? '18:00');
   }
   function removeActivity(id: string) {
@@ -4429,7 +4486,7 @@ function SettingsPage({
     if (editingActivityId === id) resetActivityBuilder();
   }
   async function generateWorkout() {
-    if (!days.length) return;
+    if (scheduleMode === 'routine' ? !days.length : !singleDate) return;
     setGenerating(true);
     try {
       const response = await fetch('/api/workout', {
@@ -4453,16 +4510,18 @@ function SettingsPage({
           : splitLabels[split],
         source: result.source,
         createdAt: new Date().toISOString(),
-        days: [...days],
+        days: scheduleMode === 'routine' ? [...days] : [],
+        specificDate: scheduleMode === 'single' ? singleDate : undefined,
         time: activityTime,
         exercises: result.exercises,
       };
       const activity: Activity = {
         id: activityId,
         name: `Musculação · ${plan.name}`,
-        days: [...days],
+        days: scheduleMode === 'routine' ? [...days] : [],
+        specificDate: scheduleMode === 'single' ? singleDate : undefined,
         minutes,
-        met,
+        intensity,
         time: activityTime,
       };
       const nextActivities = [...state.activities, activity];
@@ -4470,6 +4529,8 @@ function SettingsPage({
       setGoals(nextGoals);
       setState((current) => ({ ...current, activities: [...current.activities, activity], workoutPlans: [...current.workoutPlans, plan], goals: nextGoals }));
       setDays([]);
+      setScheduleMode('routine');
+      setSingleDate(localDateKey());
       setBodyFocus([]);
       setSplit('full_body');
     } finally {
@@ -4783,11 +4844,10 @@ function SettingsPage({
                   <div>
                     <strong>{activity.name}</strong>
                     <small>
-                      {activity.days.map((day) => fullDayNames[day]).join(', ')}{' '}
-                      · {activity.time ?? 'Sem hora'} · {activity.minutes} min
+                      {scheduleLabel(activity)} · {activity.time ?? 'Sem hora'} · {activity.minutes} min
                     </small>
                   </div>
-                  <span>MET {activity.met}</span>
+                  <span>Int. {activityIntensity(activity)}/5</span>
                   <Button
                     type="button"
                     variant="ghost"
@@ -4818,7 +4878,7 @@ function SettingsPage({
                       const preset = activityPresets.find((item) => item.name === event.target.value)!;
                       setActivityPreset(preset.name);
                       setActivityName(preset.name === 'Outro' ? '' : preset.name);
-                      setMet(preset.met);
+                      setIntensity(preset.intensity);
                     }}
                   >
                     {activityPresets.map((preset) => <option key={preset.name}>{preset.name}</option>)}
@@ -4830,8 +4890,8 @@ function SettingsPage({
                 <Field label="Hora">
                   <Input type="time" value={activityTime} onChange={(event) => setActivityTime(event.target.value)} />
                 </Field>
-                <Field label={<span className="label-help">Intensidade MET <span className="help-tip" tabIndex={0}><CircleHelp /><span role="tooltip">Escala MET: 1 = repouso sentado; 2–2,9 = leve; 3–5,9 = moderado; 6–9,9 = vigoroso; 10+ = muito vigoroso. Uma atividade de 10 MET usa aproximadamente 10× a energia do repouso durante o tempo ativo.</span></span></span>}>
-                  <NumberInput value={met} min={1} max={18} step="0.5" onChange={setMet} />
+                <Field label={<span className="label-help">Intensidade (1–5) <span className="help-tip" tabIndex={0}><CircleHelp /><span role="tooltip">1 = caminhada leve; 2 = treino leve; 3 = moderado/intenso, como judô normal; 4 = muito intenso; 5 = extremo, como maratona ou CrossFit quase sem descanso. O cálculo usa também o teu peso e a duração.</span></span></span>}>
+                  <NumberInput value={intensity} min={1} max={5} step="1" onChange={setIntensity} />
                 </Field>
               </div>
               {activityPreset === 'Outro' && (
@@ -4839,30 +4899,46 @@ function SettingsPage({
                   <Input value={activityName} onChange={(event) => setActivityName(event.target.value)} placeholder="Ex.: padel" />
                 </Field>
               )}
-              <Field label="Dias da semana">
-                <div className="day-picker">
-                  {fullDayNames.map((day, index) => (
-                    <button
-                      type="button"
-                      key={day}
-                      className={days.includes(index) ? 'selected' : ''}
-                      onClick={() =>
-                        setDays(
-                          days.includes(index)
-                            ? days.filter((item) => item !== index)
-                            : [...days, index],
-                        )
-                      }
-                    >
-                      {day}
-                    </button>
-                  ))}
+              <Field label="Agendamento">
+                <div className="schedule-mode-picker" role="group" aria-label="Tipo de agendamento">
+                  <button type="button" className={scheduleMode === 'routine' ? 'selected' : ''} onClick={() => setScheduleMode('routine')}>
+                    <strong>Rotina</strong><small>Repete semanalmente</small>
+                  </button>
+                  <button type="button" className={scheduleMode === 'single' ? 'selected' : ''} onClick={() => setScheduleMode('single')}>
+                    <strong>1 dia</strong><small>Treino pontual</small>
+                  </button>
                 </div>
               </Field>
+              {scheduleMode === 'routine' ? (
+                <Field label="Dias da semana">
+                  <div className="day-picker">
+                    {fullDayNames.map((day, index) => (
+                      <button
+                        type="button"
+                        key={day}
+                        className={days.includes(index) ? 'selected' : ''}
+                        onClick={() =>
+                          setDays(
+                            days.includes(index)
+                              ? days.filter((item) => item !== index)
+                              : [...days, index],
+                          )
+                        }
+                      >
+                        {day}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+              ) : (
+                <Field label="Data do treino">
+                  <Input type="date" value={singleDate} onChange={(event) => setSingleDate(event.target.value)} />
+                </Field>
+              )}
               {(activityPreset !== 'Musculação' || editingActivityId) && (
                 <div className="activity-builder-actions">
                   {editingActivityId && <Button type="button" variant="ghost" onClick={resetActivityBuilder}>Cancelar edição</Button>}
-                  <Button type="button" variant="outline" onClick={saveActivity}>
+                  <Button type="button" variant="outline" onClick={saveActivity} disabled={scheduleMode === 'routine' ? !days.length : !singleDate}>
                     {editingActivityId ? <Save /> : <Plus />} {editingActivityId ? 'Guardar atividade' : 'Adicionar atividade'}
                   </Button>
                 </div>
@@ -4893,15 +4969,16 @@ function SettingsPage({
                   {muscleOptions.map((muscle) => <button type="button" key={muscle.value} className={bodyFocus.includes(muscle.value) ? 'selected' : ''} onClick={() => setBodyFocus((current) => current.includes(muscle.value) ? current.filter((value) => value !== muscle.value) : [...current, muscle.value])}>{muscle.label}</button>)}
                 </div>
               </Field>
-              <Button type="button" onClick={generateWorkout} disabled={generating || !days.length}>
+              <Button type="button" onClick={generateWorkout} disabled={generating || (scheduleMode === 'routine' ? !days.length : !singleDate)}>
                 {generating ? <LoaderCircle className="spin" /> : <Sparkles />}{generating ? 'A gerar…' : 'Gerar e agendar rotina'}
               </Button>
-              {!days.length && <small className="routine-empty-hint">Escolhe acima os dias da nova rotina. Depois de gerar, o formulário fica limpo para agendares outra.</small>}
+              {scheduleMode === 'routine' && !days.length && <small className="routine-empty-hint">Escolhe acima os dias da nova rotina. Depois de gerar, o formulário fica limpo para agendares outra.</small>}
+              {scheduleMode === 'single' && <small className="routine-empty-hint">Este treino aparecerá apenas na data escolhida e não altera a tua média semanal recorrente.</small>}
               <div className="scheduled-plans">
                 {state.workoutPlans.map((plan) => (
                   <div key={plan.id}>
                     <Dumbbell />
-                    <div><strong>{plan.name}</strong><small>{plan.days?.length ? plan.days.map((day) => fullDayNames[day]).join(', ') : 'Sem dias agendados'} · {plan.time ?? 'Sem hora'} · {plan.exercises.length} exercícios</small></div>
+                    <div><strong>{plan.name}</strong><small>{scheduleLabel(plan)} · {plan.time ?? 'Sem hora'} · {plan.exercises.length} exercícios</small></div>
                     <Button type="button" variant="outline" size="sm" onClick={() => void openWorkoutEditor(plan)}><Pencil /> Abrir treino</Button>
                     <Button type="button" variant="ghost" size="icon" aria-label={`Apagar rotina ${plan.name}`} onClick={() => setState((current) => ({ ...current, activities: plan.activityId ? current.activities.filter((activity) => activity.id !== plan.activityId) : current.activities, workoutPlans: current.workoutPlans.filter((item) => item.id !== plan.id) }))}><Trash2 /></Button>
                   </div>
@@ -5130,6 +5207,7 @@ function NumberInput({
   unit,
   unitOptions,
   onUnitChange,
+  onConfirm,
 }: {
   value: number | '';
   onChange: (value: number, unit?: QuantityMode) => void;
@@ -5140,6 +5218,7 @@ function NumberInput({
   unit?: QuantityMode;
   unitOptions?: NumberUnitOption[];
   onUnitChange?: (unit: QuantityMode) => void;
+  onConfirm?: (value: number, unit?: QuantityMode) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [draftUnit, setDraftUnit] = useState<QuantityMode>(unit ?? unitOptions?.[0]?.value ?? 'g');
@@ -5234,8 +5313,11 @@ function NumberInput({
   }
 
   function commitDraftAndClose() {
+    const committedValue = parsedManualValue();
+    const committedUnit = unitOptions?.length ? draftUnit : undefined;
     if (unitOptions?.length) onUnitChange?.(draftUnit);
-    onChange(parsedManualValue(), unitOptions?.length ? draftUnit : undefined);
+    onChange(committedValue, committedUnit);
+    onConfirm?.(committedValue, committedUnit);
     setOpen(false);
   }
 

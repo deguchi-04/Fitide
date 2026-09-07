@@ -30,8 +30,10 @@ export interface Activity {
   id: string;
   name: string;
   days: number[];
+  specificDate?: string;
   minutes: number;
-  met: number;
+  intensity: number;
+  met?: number;
   time?: string;
 }
 
@@ -109,6 +111,7 @@ export interface WorkoutPlan {
   source: 'WorkoutX' | 'Demonstração';
   createdAt: string;
   days?: number[];
+  specificDate?: string;
   time?: string;
   exercises: WorkoutExercise[];
 }

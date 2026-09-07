@@ -16,28 +16,51 @@ export function bmr(profile: Profile) {
   return Math.round(10 * profile.currentWeightKg + 6.25 * profile.heightCm - 5 * profile.age + sexOffset);
 }
 
+export function activityIntensity(activity: Activity) {
+  if (Number.isFinite(activity.intensity)) return Math.min(5, Math.max(1, Math.round(activity.intensity)));
+
+  // Migração transparente das atividades guardadas antes da escala 1–5.
+  const name = activity.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (name.includes('judo')) return 3;
+  if (name.includes('musculacao')) return 2;
+  if (name.includes('caminhada')) return 1;
+  if (name.includes('futebol competitivo')) return 4;
+  if (name.includes('futebol') || name.includes('corrida') || name.includes('natacao')) return 3;
+  if (name.includes('bicicleta')) return 2;
+
+  const legacyMet = Number(activity.met);
+  if (!Number.isFinite(legacyMet)) return 2;
+  if (legacyMet <= 3) return 1;
+  if (legacyMet <= 6) return 2;
+  if (legacyMet <= 9) return 3;
+  if (legacyMet <= 12) return 4;
+  return 5;
+}
+
+function activityExtraCalories(profile: Profile, activity: Activity) {
+  const intensity = activityIntensity(activity);
+  // Equivalentes MET adicionais (o repouso já está incluído na base sedentária).
+  // A escala deliberadamente conservadora evita contar duas vezes o gasto basal.
+  const extraMet = [0, 1.5, 2.75, 4, 6, 8][intensity];
+  const minutes = Math.min(1440, Math.max(0, activity.minutes));
+  return extraMet * 3.5 * profile.currentWeightKg / 200 * minutes;
+}
+
 export function exerciseCaloriesPerWeek(profile: Profile, activities: Activity[]) {
   return activities.reduce(
-    // Standard MET conversion: kcal/min = MET × 3.5 × kg / 200.
-    // Subtract 1 MET because the sedentary baseline already includes rest.
     (sum, activity) => {
-      const met = Math.min(20, Math.max(1, activity.met));
-      const minutes = Math.min(1440, Math.max(0, activity.minutes));
+      if (activity.specificDate) return sum;
       const validDays = new Set(activity.days.filter((day) => day >= 0 && day <= 6)).size;
-      return sum + (met - 1) * 3.5 * profile.currentWeightKg / 200 * minutes * validDays;
+      return sum + activityExtraCalories(profile, activity) * validDays;
     },
     0,
   );
 }
 
-export function exerciseCaloriesForDay(profile: Profile, activities: Activity[], day: number) {
+export function exerciseCaloriesForDay(profile: Profile, activities: Activity[], day: number, date?: string) {
   return activities
-    .filter((activity) => activity.days.includes(day))
-    .reduce((sum, activity) => {
-      const met = Math.min(20, Math.max(1, activity.met));
-      const minutes = Math.min(1440, Math.max(0, activity.minutes));
-      return sum + (met - 1) * 3.5 * profile.currentWeightKg / 200 * minutes;
-    }, 0);
+    .filter((activity) => activity.specificDate ? activity.specificDate === date : activity.days.includes(day))
+    .reduce((sum, activity) => sum + activityExtraCalories(profile, activity), 0);
 }
 
 export function sedentaryTdee(profile: Profile) {
