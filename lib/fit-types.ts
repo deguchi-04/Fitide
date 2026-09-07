@@ -100,6 +100,7 @@ export interface WorkoutExercise {
   equipment: string;
   sets: number;
   reps: string;
+  weightKg?: number;
   restSeconds: number;
   gifUrl?: string;
 }
@@ -108,7 +109,7 @@ export interface WorkoutPlan {
   id: string;
   activityId?: string;
   name: string;
-  source: 'WorkoutX' | 'Demonstração';
+  source: 'WorkoutX' | 'Demonstração' | 'Personalizado';
   createdAt: string;
   days?: number[];
   specificDate?: string;

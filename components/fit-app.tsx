@@ -185,6 +185,55 @@ const muscleOptions = [
   { value: 'lower legs', label: 'Gémeos' },
   { value: 'waist', label: 'Abdominais' },
 ];
+const workoutEquipmentOptions = [
+  { value: 'free_weights', label: 'Pesos livres' },
+  { value: 'dumbbell', label: 'Halteres' },
+  { value: 'barbell', label: 'Barra' },
+  { value: 'body weight', label: 'Livre / peso corporal' },
+  { value: 'cable', label: 'Cabos' },
+  { value: 'leverage machine', label: 'Máquinas' },
+  { value: 'smith machine', label: 'Máquina Smith' },
+  { value: 'kettlebell', label: 'Kettlebell' },
+  { value: 'resistance band', label: 'Bandas' },
+];
+const defaultWorkoutEquipment = ['dumbbell', 'barbell', 'body weight', 'cable', 'leverage machine'];
+const storedWorkoutFieldTranslations: Record<string, string> = {
+  pecho: 'Peito', espalda: 'Costas', hombros: 'Ombros', brazos: 'Braços', antebrazos: 'Antebraços',
+  piernas: 'Pernas', pantorrillas: 'Gémeos', gemelos: 'Gémeos', cintura: 'Abdominais', abdominales: 'Abdominais',
+  gluteos: 'Glúteos', isquiotibiales: 'Posteriores da coxa', cuadriceps: 'Quadríceps', dorsales: 'Dorsais',
+  pectorales: 'Peitoral', biceps: 'Bíceps', triceps: 'Tríceps', mancuerna: 'Halteres', mancuernas: 'Halteres',
+  barra: 'Barra', cable: 'Cabo', 'peso corporal': 'Peso corporal', maquina: 'Máquina',
+  'maquina smith': 'Máquina Smith', banda: 'Banda elástica', 'banda de resistencia': 'Banda de resistência',
+  'pesa rusa': 'Kettlebell', kettlebell: 'Kettlebell',
+};
+const storedWorkoutNameTranslations: Array<[string, string]> = [
+  ['peso muerto rumano', 'peso morto romeno'], ['peso muerto', 'peso morto'],
+  ['press de banca', 'supino'], ['press de pecho', 'press de peito'], ['press de hombros', 'press de ombros'],
+  ['jalon al pecho', 'puxada ao peito'], ['jalon', 'puxada'], ['remo sentado', 'remada sentada'],
+  ['remo inclinado', 'remada inclinada'], ['remo', 'remada'], ['sentadilla dividida', 'agachamento unilateral'],
+  ['sentadilla', 'agachamento'], ['zancada', 'afundo'], ['extension de piernas', 'extensão de pernas'],
+  ['curl de piernas', 'flexão de pernas'], ['elevacion de talones', 'elevação de gémeos'],
+  ['elevacion lateral', 'elevação lateral'], ['elevacion frontal', 'elevação frontal'],
+  ['extension de triceps', 'extensão de tríceps'], ['curl de biceps', 'rosca de bíceps'],
+  ['curl martillo', 'rosca martelo'], ['dominada', 'elevação na barra'], ['flexion', 'flexão'],
+  ['plancha', 'prancha'], ['encogimiento', 'encolhimento'], ['con mancuernas', 'com halteres'],
+  ['con mancuerna', 'com halteres'], ['con barra', 'com barra'], ['en maquina', 'na máquina'],
+  ['sentado', 'sentado'], ['de pie', 'em pé'], ['acostado', 'deitado'], ['inclinado', 'inclinado'],
+];
+
+function localizeStoredWorkoutExercise(exercise: WorkoutExercise): WorkoutExercise {
+  const translateField = (value: string) => storedWorkoutFieldTranslations[normalizeText(value)] ?? value;
+  let name = normalizeText(exercise.name);
+  const looksSpanish = /\b(sentadilla|zancada|jalon|dominada|encogimiento|mancuerna|mancuernas|maquina|acostado|talones|piernas|hombros)\b/.test(name)
+    || /\bpress de (banca|pecho)\b/.test(name)
+    || /\b(con barra|de pie)\b/.test(name);
+  if (!looksSpanish) return exercise;
+  for (const [spanish, portuguese] of storedWorkoutNameTranslations) {
+    name = name.replace(new RegExp(`\\b${spanish}\\b`, 'g'), portuguese);
+  }
+  name = name ? name[0].toLocaleUpperCase('pt-PT') + name.slice(1) : exercise.name;
+  return { ...exercise, name, target: translateField(exercise.target), equipment: translateField(exercise.equipment) };
+}
 const activityPresets = [
   { name: 'Musculação', intensity: 2 },
   { name: 'Judô', intensity: 3 },
@@ -204,6 +253,48 @@ function normalizeText(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+function suggestedWorkoutWeight(level: string, equipment = '') {
+  const normalized = normalizeText(equipment);
+  if (normalized.includes('peso corporal') || normalized.includes('body weight') || normalized.includes('assist')) return 0;
+  const index = level === 'beginner' ? 0 : level === 'advanced' ? 2 : 1;
+  if (/barra|maquina|smith|sled/.test(normalized)) return [10, 20, 30][index];
+  if (/halter|dumbbell|kettlebell/.test(normalized)) return [4, 8, 12][index];
+  return [5, 10, 15][index];
+}
+
+let workoutAudioContext: AudioContext | null = null;
+
+function prepareWorkoutSound() {
+  if (typeof window === 'undefined') return;
+  const AudioContextClass = window.AudioContext
+    ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextClass) return;
+  workoutAudioContext ??= new AudioContextClass();
+  if (workoutAudioContext.state === 'suspended') void workoutAudioContext.resume();
+}
+
+function playWorkoutSound(kind: 'phase' | 'done' = 'phase') {
+  prepareWorkoutSound();
+  if (!workoutAudioContext) return;
+  const start = workoutAudioContext.currentTime;
+  const tones = kind === 'done' ? [660, 880, 1040] : [760, 940];
+  tones.forEach((frequency, index) => {
+    const oscillator = workoutAudioContext!.createOscillator();
+    const gain = workoutAudioContext!.createGain();
+    const toneStart = start + index * 0.17;
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(frequency, toneStart);
+    gain.gain.setValueAtTime(0.0001, toneStart);
+    gain.gain.exponentialRampToValueAtTime(0.2, toneStart + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, toneStart + 0.13);
+    oscillator.connect(gain);
+    gain.connect(workoutAudioContext!.destination);
+    oscillator.start(toneStart);
+    oscillator.stop(toneStart + 0.15);
+  });
+  if ('vibrate' in navigator) navigator.vibrate(kind === 'done' ? [180, 80, 180] : 120);
 }
 
 function editDistance(a: string, b: string) {
@@ -707,7 +798,13 @@ function mergeState(saved: Partial<AppState>): AppState {
     weights: saved.weights ?? [],
     water: saved.water ?? [],
     fasts: saved.fasts ?? [],
-    workoutPlans: saved.workoutPlans ?? [],
+    workoutPlans: (saved.workoutPlans ?? []).map((plan) => ({
+      ...plan,
+      exercises: plan.exercises.map((exercise) => localizeStoredWorkoutExercise({
+        ...exercise,
+        weightKg: exercise.weightKg ?? 0,
+      })),
+    })),
     workoutSessions: saved.workoutSessions ?? [],
     intervalPresets: saved.intervalPresets ?? defaultState.intervalPresets,
     judoPractices: saved.judoPractices ?? [],
@@ -753,6 +850,7 @@ export default function FitApp() {
   const [healthSyncStatus, setHealthSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
   const [healthSyncMessage, setHealthSyncMessage] = useState('');
   const healthSyncInFlight = useRef(false);
+  const healthPermissionPending = useRef(false);
   const healthLastSyncRef = useRef(0);
 
   const syncHealthConnect = useCallback(async ({ requestPermissions = false, silent = false }: { requestPermissions?: boolean; silent?: boolean } = {}) => {
@@ -760,26 +858,9 @@ export default function FitApp() {
     healthSyncInFlight.current = true;
     if (!silent) {
       setHealthSyncStatus('syncing');
-      setHealthSyncMessage(requestPermissions ? 'A pedir autorização no Health Connect…' : 'A sincronizar os dados de hoje…');
+      setHealthSyncMessage(requestPermissions ? 'A verificar acesso ao Health Connect…' : 'A sincronizar os dados de hoje…');
     }
     try {
-      if (requestPermissions) {
-        const inactive = JSON.stringify({ IsActive: false, AccessType: 'READ' });
-        await HealthFitness.requestHealthPermissions({
-          customPermissions: JSON.stringify([
-            { Variable: 'STEPS', AccessType: 'READ' },
-            { Variable: 'CALORIES_BURNED', AccessType: 'READ' },
-            { Variable: 'HEART_RATE', AccessType: 'READ' },
-            { Variable: 'SLEEP', AccessType: 'READ' },
-            { Variable: 'BODY_FAT_PERCENTAGE', AccessType: 'READ' },
-          ]),
-          allVariables: inactive,
-          fitnessVariables: inactive,
-          healthVariables: inactive,
-          profileVariables: inactive,
-          workoutVariables: inactive,
-        });
-      }
       const date = localDateKey();
       const start = new Date(`${date}T00:00:00`);
       const end = new Date(start);
@@ -791,18 +872,45 @@ export default function FitApp() {
         ['SLEEP', 'SUM'],
         ['BODY_FAT_PERCENTAGE', 'AVERAGE'],
       ] as const;
-      const metricValues: Array<number | undefined> = [];
-      const metricErrors: unknown[] = [];
-      for (const [variable, operation] of metricRequests) {
+      const metricResults = await Promise.all(metricRequests.map(async ([variable, operation]) => {
         try {
-          metricValues.push(await queryHealthMetric(variable, operation, start, end));
+          return { value: await queryHealthMetric(variable, operation, start, end) };
         } catch (error) {
-          metricErrors.push(error);
-          metricValues.push(undefined);
+          return { value: undefined, error };
         }
-      }
+      }));
+      const metricValues = metricResults.map((result) => result.value);
+      const metricErrors = metricResults.flatMap((result) => result.error ? [result.error] : []);
       const [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent] = metricValues;
       if ([steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent].every((metric) => metric === undefined)) {
+        if (requestPermissions) {
+          const inactive = JSON.stringify({ IsActive: false, AccessType: 'READ' });
+          healthPermissionPending.current = true;
+          setHealthSyncStatus('idle');
+          setHealthSyncMessage('Autoriza a Fitide no Health Connect e volta à app. A sincronização continua automaticamente.');
+          void HealthFitness.requestHealthPermissions({
+            customPermissions: JSON.stringify([
+              { Variable: 'STEPS', AccessType: 'READ' },
+              { Variable: 'CALORIES_BURNED', AccessType: 'READ' },
+              { Variable: 'HEART_RATE', AccessType: 'READ' },
+              { Variable: 'SLEEP', AccessType: 'READ' },
+              { Variable: 'BODY_FAT_PERCENTAGE', AccessType: 'READ' },
+            ]),
+            allVariables: inactive,
+            fitnessVariables: inactive,
+            healthVariables: inactive,
+            profileVariables: inactive,
+            workoutVariables: inactive,
+          }).then(() => {
+            healthPermissionPending.current = false;
+            window.dispatchEvent(new Event('fitide-health-permission-returned'));
+          }).catch((error) => {
+            healthPermissionPending.current = false;
+            setHealthSyncStatus('error');
+            setHealthSyncMessage(error instanceof Error ? error.message : 'Não foi possível abrir as permissões do Health Connect.');
+          });
+          return false;
+        }
         throw new Error(metricErrors.length
           ? 'A Fitide ainda não tem acesso aos dados. Em Health Connect, abre “Permissões de apps”, escolhe Fitide e permite os dados pedidos.'
           : 'Não encontrei registos de hoje no Health Connect. Confirma se a app do relógio já sincronizou os dados.');
@@ -862,20 +970,29 @@ export default function FitApp() {
   }, [state.theme]);
 
   useEffect(() => {
-    if (!loaded || !state.healthSyncEnabled || !Capacitor.isNativePlatform()) return;
+    if (!loaded || !Capacitor.isNativePlatform()) return;
     const syncIfStale = () => {
-      if (Date.now() - healthLastSyncRef.current >= 14 * 60 * 1000) {
+      if (state.healthSyncEnabled && Date.now() - healthLastSyncRef.current >= 14 * 60 * 1000) {
         void syncHealthConnect({ silent: true });
       }
     };
     syncIfStale();
     const interval = window.setInterval(syncIfStale, 15 * 60 * 1000);
+    const syncAfterPermission = () => window.setTimeout(() => void syncHealthConnect({ silent: false }), 250);
+    window.addEventListener('fitide-health-permission-returned', syncAfterPermission);
     let removeListener: (() => Promise<void>) | undefined;
     void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-      if (isActive) syncIfStale();
+      if (!isActive) return;
+      if (healthPermissionPending.current) {
+        healthPermissionPending.current = false;
+        window.setTimeout(() => void syncHealthConnect({ silent: false }), 350);
+        return;
+      }
+      syncIfStale();
     }).then((handle) => { removeListener = () => handle.remove(); });
     return () => {
       window.clearInterval(interval);
+      window.removeEventListener('fitide-health-permission-returned', syncAfterPermission);
       void removeListener?.();
     };
   }, [loaded, state.healthSyncEnabled, syncHealthConnect]);
@@ -1111,7 +1228,7 @@ export default function FitApp() {
         onGo={setPage}
         healthSyncStatus={healthSyncStatus}
         healthSyncMessage={healthSyncMessage}
-        onHealthSync={() => syncHealthConnect({ requestPermissions: true })}
+        onHealthSync={() => syncHealthConnect({ requestPermissions: !state.healthSyncEnabled })}
       />
     );
     if (targetPage === 'meals') return (
@@ -1136,7 +1253,7 @@ export default function FitApp() {
       />
     );
     if (targetPage === 'progress') return <ProgressPage state={state} setState={setState} />;
-    return <SettingsPage state={state} setState={setState} onReset={resetProfile} healthSyncStatus={healthSyncStatus} healthSyncMessage={healthSyncMessage} onHealthSync={() => syncHealthConnect({ requestPermissions: true })} />;
+    return <SettingsPage state={state} setState={setState} onReset={resetProfile} healthSyncStatus={healthSyncStatus} healthSyncMessage={healthSyncMessage} onHealthSync={() => syncHealthConnect({ requestPermissions: !state.healthSyncEnabled })} />;
   }
 
   return (
@@ -3021,18 +3138,42 @@ function WorkoutPage({
     if (!startedAt) return;
     const timer = window.setInterval(() => {
       setElapsed(Math.floor((Date.now() - startedAt) / 1000));
-      setRest((value) => Math.max(0, value - 1));
+      setRest((value) => {
+        if (value === 1 && !Capacitor.isNativePlatform()) playWorkoutSound('done');
+        return Math.max(0, value - 1);
+      });
     }, 1000);
     return () => window.clearInterval(timer);
   }, [startedAt]);
 
   function startWorkout(plan: WorkoutPlan) {
+    prepareWorkoutSound();
     setActivePlan(plan);
     setStartedAt(Date.now());
     setElapsed(0);
     setCompletedSets([]);
     setRest(0);
-    setSetValues({});
+    setSetValues(Object.fromEntries(plan.exercises.flatMap((exercise) =>
+      Array.from({ length: exercise.sets }, (_, setIndex) => [
+        `${exercise.id}-${setIndex}`,
+        { load: exercise.weightKg ?? 0, reps: Number.parseInt(exercise.reps, 10) || 12 },
+      ]),
+    )));
+  }
+
+  function startExerciseRest(exercise: WorkoutExercise) {
+    if (exercise.restSeconds <= 0) return;
+    prepareWorkoutSound();
+    setRest(exercise.restSeconds);
+    if (Capacitor.isNativePlatform()) {
+      void NativeWorkoutTimer.start({
+        name: `Descanso · ${exercise.name}`,
+        mode: 'interval',
+        workSeconds: exercise.restSeconds,
+        restSeconds: 0,
+        rounds: 1,
+      }).catch(() => undefined);
+    }
   }
 
   function finishWorkout() {
@@ -3060,13 +3201,14 @@ function WorkoutPage({
     setElapsed(0);
     setCompletedSets([]);
     setRest(0);
+    if (Capacitor.isNativePlatform()) void NativeWorkoutTimer.stop().catch(() => undefined);
   }
 
   if (activePlan)
     return (
       <div className="content-page workout-live page-enter">
         <section className="live-header">
-          <Button variant="ghost" onClick={() => setActivePlan(null)}>
+          <Button variant="ghost" onClick={() => { setActivePlan(null); if (Capacitor.isNativePlatform()) void NativeWorkoutTimer.stop().catch(() => undefined); }}>
             <ArrowLeft /> Sair
           </Button>
           <div>
@@ -3084,7 +3226,7 @@ function WorkoutPage({
               <CirclePause /> Descanso
             </span>
             <strong>{formatDuration(rest)}</strong>
-            <Button size="sm" variant="ghost" onClick={() => setRest(0)}>
+            <Button size="sm" variant="ghost" onClick={() => { setRest(0); if (Capacitor.isNativePlatform()) void NativeWorkoutTimer.stop().catch(() => undefined); }}>
               Saltar
             </Button>
           </div>
@@ -3162,7 +3304,7 @@ function WorkoutPage({
                               );
                             else {
                               setCompletedSets([...completedSets, key]);
-                              setRest(exercise.restSeconds);
+                              startExerciseRest(exercise);
                             }
                           }}
                         >
@@ -3352,7 +3494,7 @@ function ExerciseDemoDialog({ exercise, onClose }: { exercise: WorkoutExercise; 
           <Button type="button" variant="ghost" size="icon" aria-label="Fechar demonstração" onClick={onClose}><X /></Button>
         </header>
         {exercise.gifUrl ? <img src={exercise.gifUrl} alt={`Demonstração de ${exercise.name}`} /> : <div className="demo-unavailable"><Dumbbell /><p>Demonstração indisponível para este exercício.</p></div>}
-        <div className="exercise-demo-stats"><MiniStat label="Séries" value={String(exercise.sets)} /><MiniStat label="Repetições" value={exercise.reps} /><MiniStat label="Descanso" value={`${exercise.restSeconds} s`} /></div>
+        <div className="exercise-demo-stats"><MiniStat label="Séries" value={String(exercise.sets)} /><MiniStat label="Repetições" value={exercise.reps} /><MiniStat label="Peso inicial" value={`${exercise.weightKg ?? 0} kg`} /><MiniStat label="Descanso" value={`${exercise.restSeconds} s`} /></div>
         <p>{exercise.target} · {exercise.equipment}</p>
       </section>
     </div></OverlayPortal>
@@ -3400,6 +3542,7 @@ function TrainingTimer({
       await callNative(() => NativeWorkoutTimer.pause());
       return;
     }
+    prepareWorkoutSound();
     setRunning(true);
     if (nativeStarted.current) await callNative(() => NativeWorkoutTimer.resume());
     else {
@@ -3416,19 +3559,22 @@ function TrainingTimer({
   const nextPhase = useCallback(() => {
     if (phase === 'work') {
       if (round >= rounds) {
+        if (!Capacitor.isNativePlatform()) playWorkoutSound('done');
         setPhase('done');
         setRemaining(0);
         setRunning(false);
         nativeStarted.current = false;
-        void callNative(() => NativeWorkoutTimer.stop());
       } else if (restSeconds > 0) {
+        playWorkoutSound('phase');
         setPhase('rest');
         setRemaining(restSeconds);
       } else {
+        playWorkoutSound('phase');
         setRound((value) => value + 1);
         setRemaining(workSeconds);
       }
     } else if (phase === 'rest') {
+      playWorkoutSound('phase');
       setRound((value) => value + 1);
       setPhase('work');
       setRemaining(workSeconds);
@@ -3479,7 +3625,7 @@ function TrainingTimer({
   }
 
   return (
-    <Card className="panel interval-card">
+    <Card className={`panel interval-card ${running ? 'timer-running-sticky' : ''}`}>
       <CardHeader className="panel-heading timer-collapsed-head">
         <div>
           <p className="eyebrow">CRONÓMETRO</p>
@@ -4303,6 +4449,16 @@ function pickHealthValues(payload: string | undefined): number[] {
       }
       if (!value || typeof value !== 'object') return;
       const record = value as Record<string, unknown>;
+      const numericList = ['values', 'Values', 'result', 'Result']
+        .map((candidate) => record[candidate])
+        .find((candidate) => Array.isArray(candidate) && candidate.some((item) => typeof item === 'number' || (typeof item === 'string' && Number.isFinite(Number(item.replace(',', '.'))))));
+      if (Array.isArray(numericList)) {
+        numericList.forEach((item) => {
+          if (typeof item === 'number') values.push(item);
+          else if (typeof item === 'string' && Number.isFinite(Number(item.replace(',', '.')))) values.push(Number(item.replace(',', '.')));
+        });
+        return;
+      }
       const preferred = ['y', 'value', 'Value', 'sum', 'Sum', 'average', 'Average', 'total', 'Total'];
       const key = preferred.find((candidate) => {
         const candidateValue = record[candidate];
@@ -4325,18 +4481,21 @@ function pickHealthValues(payload: string | undefined): number[] {
 
 async function queryHealthMetric(variable: string, operation: 'SUM' | 'AVERAGE', start: Date, end: Date) {
   const isoDate = (value: Date) => `${value.toISOString().split('.')[0]}Z`;
-  const result = await HealthFitness.getData({
-    parameters: JSON.stringify({
-      Variable: variable,
-      StartDate: isoDate(start),
-      EndDate: isoDate(end),
-      TimeUnit: 'DAY',
-      OperationType: operation,
-      TimeUnitLength: 1,
-      AdvancedQueryReturnType: 'ALL_DATA',
-      AdvancedQueryResultType: 'RAW_DATA',
+  const result = await Promise.race([
+    HealthFitness.getData({
+      parameters: JSON.stringify({
+        Variable: variable,
+        StartDate: isoDate(start),
+        EndDate: isoDate(end),
+        TimeUnit: 'DAY',
+        OperationType: operation,
+        TimeUnitLength: 1,
+        AdvancedQueryReturnType: 'ALL_DATA',
+        AdvancedQueryResultType: 'RAW_DATA',
+      }),
     }),
-  });
+    new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error(`Tempo excedido ao ler ${variable}.`)), 9000)),
+  ]);
   const dataPoints = pickHealthValues(result.resultDataPoints);
   const values = dataPoints.length ? dataPoints : pickHealthValues(result.results);
   if (!values.length) return undefined;
@@ -4408,8 +4567,10 @@ function SettingsPage({
   const [split, setSplit] = useState('full_body');
   const [bodyFocus, setBodyFocus] = useState<string[]>([]);
   const [level, setLevel] = useState('intermediate');
+  const [workoutEquipment, setWorkoutEquipment] = useState<string[]>(defaultWorkoutEquipment);
   const [generating, setGenerating] = useState(false);
   const [editingPlan, setEditingPlan] = useState<WorkoutPlan | null>(null);
+  const [creatingPlan, setCreatingPlan] = useState(false);
   const [exerciseAlternatives, setExerciseAlternatives] = useState<WorkoutExercise[]>([]);
   const [loadingAlternatives, setLoadingAlternatives] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -4497,6 +4658,7 @@ function SettingsPage({
           level,
           split,
           bodyFocus,
+          equipment: workoutEquipment,
         }),
       });
       if (!response.ok) throw new Error('workout');
@@ -4533,12 +4695,12 @@ function SettingsPage({
       setSingleDate(localDateKey());
       setBodyFocus([]);
       setSplit('full_body');
+      setWorkoutEquipment(defaultWorkoutEquipment);
     } finally {
       setGenerating(false);
     }
   }
-  async function openWorkoutEditor(plan: WorkoutPlan) {
-    setEditingPlan({ ...plan, days: [...(plan.days ?? [])], exercises: plan.exercises.map((exercise) => ({ ...exercise })) });
+  async function loadWorkoutCatalog() {
     const currentExercises = state.workoutPlans.flatMap((item) => item.exercises);
     setExerciseAlternatives(currentExercises.filter((exercise, index, items) => items.findIndex((item) => item.id === exercise.id) === index));
     setLoadingAlternatives(true);
@@ -4557,8 +4719,52 @@ function SettingsPage({
       setLoadingAlternatives(false);
     }
   }
+  async function openWorkoutEditor(plan: WorkoutPlan) {
+    setCreatingPlan(false);
+    setEditingPlan({ ...plan, days: [...(plan.days ?? [])], exercises: plan.exercises.map((exercise) => ({ ...exercise })) });
+    await loadWorkoutCatalog();
+  }
+  async function createCustomWorkout() {
+    if (scheduleMode === 'routine' ? !days.length : !singleDate) return;
+    const activityId = uid();
+    setCreatingPlan(true);
+    setEditingPlan({
+      id: uid(),
+      activityId,
+      name: 'O meu treino',
+      source: 'Personalizado',
+      createdAt: new Date().toISOString(),
+      days: scheduleMode === 'routine' ? [...days] : [],
+      specificDate: scheduleMode === 'single' ? singleDate : undefined,
+      time: activityTime,
+      exercises: [],
+    });
+    await loadWorkoutCatalog();
+  }
   function saveWorkoutPlan(plan: WorkoutPlan) {
-    setState((current) => ({ ...current, workoutPlans: current.workoutPlans.map((item) => item.id === plan.id ? plan : item) }));
+    if (!plan.name.trim() || !plan.exercises.length) return;
+    if (creatingPlan) {
+      const activity: Activity = {
+        id: plan.activityId ?? uid(),
+        name: `Musculação · ${plan.name.trim()}`,
+        days: [...(plan.days ?? [])],
+        specificDate: plan.specificDate,
+        minutes,
+        intensity,
+        time: plan.time,
+      };
+      const savedPlan = { ...plan, activityId: activity.id, name: plan.name.trim() };
+      const nextActivities = [...state.activities, activity];
+      const nextGoals = alignCalorieGoal(goals, profile, nextActivities);
+      setGoals(nextGoals);
+      setState((current) => ({ ...current, activities: [...current.activities, activity], workoutPlans: [...current.workoutPlans, savedPlan], goals: nextGoals }));
+      setDays([]);
+      setScheduleMode('routine');
+      setSingleDate(localDateKey());
+    } else {
+      setState((current) => ({ ...current, workoutPlans: current.workoutPlans.map((item) => item.id === plan.id ? { ...plan, name: plan.name.trim() } : item) }));
+    }
+    setCreatingPlan(false);
     setEditingPlan(null);
   }
   return (
@@ -4969,9 +5175,20 @@ function SettingsPage({
                   {muscleOptions.map((muscle) => <button type="button" key={muscle.value} className={bodyFocus.includes(muscle.value) ? 'selected' : ''} onClick={() => setBodyFocus((current) => current.includes(muscle.value) ? current.filter((value) => value !== muscle.value) : [...current, muscle.value])}>{muscle.label}</button>)}
                 </div>
               </Field>
-              <Button type="button" onClick={generateWorkout} disabled={generating || (scheduleMode === 'routine' ? !days.length : !singleDate)}>
-                {generating ? <LoaderCircle className="spin" /> : <Sparkles />}{generating ? 'A gerar…' : 'Gerar e agendar rotina'}
-              </Button>
+              <Field label="Equipamento disponível">
+                <div className="muscle-picker equipment-picker">
+                  {workoutEquipmentOptions.map((equipment) => <button type="button" key={equipment.value} className={workoutEquipment.includes(equipment.value) ? 'selected' : ''} onClick={() => setWorkoutEquipment((current) => current.includes(equipment.value) ? current.filter((value) => value !== equipment.value) : [...current, equipment.value])}>{equipment.label}</button>)}
+                </div>
+              </Field>
+              <div className="workout-creation-actions">
+                <Button type="button" onClick={generateWorkout} disabled={generating || !workoutEquipment.length || (scheduleMode === 'routine' ? !days.length : !singleDate)}>
+                  {generating ? <LoaderCircle className="spin" /> : <Sparkles />}{generating ? 'A gerar…' : 'Gerar com a Fitide'}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => void createCustomWorkout()} disabled={scheduleMode === 'routine' ? !days.length : !singleDate}>
+                  <Plus /> Criar personalizado
+                </Button>
+              </div>
+              {!workoutEquipment.length && <small className="routine-empty-hint">Escolhe pelo menos um tipo de equipamento.</small>}
               {scheduleMode === 'routine' && !days.length && <small className="routine-empty-hint">Escolhe acima os dias da nova rotina. Depois de gerar, o formulário fica limpo para agendares outra.</small>}
               {scheduleMode === 'single' && <small className="routine-empty-hint">Este treino aparecerá apenas na data escolhida e não altera a tua média semanal recorrente.</small>}
               <div className="scheduled-plans">
@@ -5048,11 +5265,13 @@ function SettingsPage({
       {editingPlan && (
         <WorkoutPlanEditorDialog
           plan={editingPlan}
+          creating={creatingPlan}
+          level={level}
           alternatives={exerciseAlternatives}
           loadingAlternatives={loadingAlternatives}
           onChange={setEditingPlan}
           onSave={saveWorkoutPlan}
-          onClose={() => setEditingPlan(null)}
+          onClose={() => { setCreatingPlan(false); setEditingPlan(null); }}
         />
       )}
       {confirmReset && (
@@ -5070,6 +5289,8 @@ function SettingsPage({
 
 function WorkoutPlanEditorDialog({
   plan,
+  creating,
+  level,
   alternatives,
   loadingAlternatives,
   onChange,
@@ -5077,12 +5298,26 @@ function WorkoutPlanEditorDialog({
   onClose,
 }: {
   plan: WorkoutPlan;
+  creating: boolean;
+  level: string;
   alternatives: WorkoutExercise[];
   loadingAlternatives: boolean;
   onChange: (plan: WorkoutPlan) => void;
   onSave: (plan: WorkoutPlan) => void;
   onClose: () => void;
 }) {
+  const [equipmentFilter, setEquipmentFilter] = useState('all');
+  const [exerciseSearch, setExerciseSearch] = useState('');
+  const equipmentChoices = useMemo(() => [...new Set(alternatives.map((exercise) => exercise.equipment).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-PT')), [alternatives]);
+  const filteredAlternatives = useMemo(() => {
+    const query = normalizeText(exerciseSearch);
+    return alternatives.filter((exercise) => {
+      if (equipmentFilter !== 'all' && exercise.equipment !== equipmentFilter) return false;
+      if (!query) return true;
+      return normalizeText(`${exercise.name} ${exercise.target} ${exercise.equipment}`).includes(query);
+    });
+  }, [alternatives, equipmentFilter, exerciseSearch]);
+
   useEffect(() => {
     const close = (event: Event) => { event.preventDefault(); onClose(); };
     window.addEventListener('fitide-back', close);
@@ -5103,6 +5338,37 @@ function WorkoutPlanEditorDialog({
       sets: current.sets,
       reps: current.reps,
       restSeconds: current.restSeconds,
+      weightKg: current.weightKg,
+    });
+  }
+
+  function addExercise(exerciseId: string) {
+    const exercise = alternatives.find((item) => item.id === exerciseId);
+    if (!exercise) return;
+    onChange({
+      ...plan,
+      exercises: [...plan.exercises, {
+        ...exercise,
+        id: `${exercise.id}-${uid()}`,
+        reps: '12',
+        weightKg: exercise.weightKg ?? suggestedWorkoutWeight(level, exercise.equipment),
+      }],
+    });
+  }
+
+  function addManualExercise() {
+    onChange({
+      ...plan,
+      exercises: [...plan.exercises, {
+        id: uid(),
+        name: 'Novo exercício',
+        target: 'Grupo muscular',
+        equipment: equipmentFilter === 'all' ? 'Outro' : equipmentFilter,
+        sets: 3,
+        reps: '12',
+        weightKg: suggestedWorkoutWeight(level, equipmentFilter === 'all' ? 'Outro' : equipmentFilter),
+        restSeconds: 60,
+      }],
     });
   }
 
@@ -5110,10 +5376,39 @@ function WorkoutPlanEditorDialog({
     <OverlayPortal><div className="dialog-backdrop workout-editor-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="workout-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="workout-editor-title">
         <header>
-          <div><p className="eyebrow">ROTINA SEMANAL</p><h2 id="workout-editor-title">Editar {plan.name}</h2><small>{plan.exercises.length} exercícios · {plan.time ?? 'Sem hora'}</small></div>
+          <div><p className="eyebrow">{creating ? 'NOVO TREINO PERSONALIZADO' : 'ROTINA SEMANAL'}</p><h2 id="workout-editor-title">{creating ? 'Criar o meu treino' : `Editar ${plan.name}`}</h2><small>{plan.exercises.length} exercícios · {plan.time ?? 'Sem hora'}</small></div>
           <Button type="button" variant="ghost" size="icon" aria-label="Fechar editor" onClick={onClose}><X /></Button>
         </header>
         <div className="workout-editor-list">
+          <section className="custom-workout-name">
+            <Field label="Nome do treino"><Input value={plan.name} onChange={(event) => onChange({ ...plan, name: event.target.value })} placeholder="Ex.: Peito e tríceps" /></Field>
+            {creating && <p>Escolhe exercícios do catálogo ou adiciona um manualmente. Todos começam com 12 repetições e uma carga inicial editável adequada ao nível selecionado.</p>}
+          </section>
+          <section className="workout-editor-catalog" aria-label="Adicionar exercícios">
+            <div>
+              <Field label="Procurar no catálogo">
+                <Input value={exerciseSearch} onChange={(event) => setExerciseSearch(event.target.value)} placeholder="Ex.: remada, peito, halteres…" />
+              </Field>
+              <Field label="Equipamento">
+                <select value={equipmentFilter} onChange={(event) => setEquipmentFilter(event.target.value)}>
+                  <option value="all">Todos os equipamentos</option>
+                  {equipmentChoices.map((equipment) => <option key={equipment} value={equipment}>{equipment}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div>
+              <Field label={loadingAlternatives ? 'A carregar catálogo…' : `${filteredAlternatives.length} exercícios disponíveis`}>
+                <select value="" disabled={loadingAlternatives || !filteredAlternatives.length} onChange={(event) => addExercise(event.target.value)}>
+                  <option value="">Adicionar exercício do catálogo…</option>
+                  {filteredAlternatives.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name} · {exercise.target}</option>)}
+                </select>
+              </Field>
+              <Button type="button" variant="outline" onClick={addManualExercise}><Plus /> Adicionar manualmente</Button>
+            </div>
+          </section>
+          {!plan.exercises.length && (
+            <div className="custom-workout-empty"><Dumbbell /><strong>O treino ainda está vazio</strong><span>Adiciona o primeiro exercício acima.</span></div>
+          )}
           {plan.exercises.map((exercise, index) => (
             <article key={`${exercise.id}-${index}`} className="workout-editor-exercise">
               <div className="workout-editor-number">{String(index + 1).padStart(2, '0')}</div>
@@ -5122,20 +5417,22 @@ function WorkoutPlanEditorDialog({
                 <Field label={loadingAlternatives ? 'A carregar alternativas…' : 'Substituir por exercício existente'}>
                   <select value="" disabled={loadingAlternatives || !alternatives.length} onChange={(event) => replaceExercise(index, event.target.value)}>
                     <option value="">Escolher substituição…</option>
-                    {alternatives.filter((item) => item.name !== exercise.name).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.target}</option>)}
+                    {filteredAlternatives.filter((item) => item.name !== exercise.name).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.target}</option>)}
                   </select>
                 </Field>
+                <Field label="Equipamento"><Input value={exercise.equipment} onChange={(event) => patchExercise(index, { equipment: event.target.value })} /></Field>
                 <div className="workout-editor-values">
                   <Field label="Séries"><NumberInput value={exercise.sets} min={1} max={12} onChange={(sets) => patchExercise(index, { sets })} /></Field>
                   <Field label="Repetições"><Input value={exercise.reps} onChange={(event) => patchExercise(index, { reps: event.target.value })} /></Field>
+                  <Field label="Peso (kg)"><NumberInput value={exercise.weightKg ?? 0} min={0} max={400} step="0.5" onChange={(weightKg) => patchExercise(index, { weightKg })} /></Field>
                   <Field label="Descanso (s)"><NumberInput value={exercise.restSeconds} min={0} max={600} step="5" onChange={(restSeconds) => patchExercise(index, { restSeconds })} /></Field>
                 </div>
               </div>
-              <Button type="button" variant="ghost" size="icon" aria-label={`Remover ${exercise.name}`} disabled={plan.exercises.length <= 1} onClick={() => onChange({ ...plan, exercises: plan.exercises.filter((_, exerciseIndex) => exerciseIndex !== index) })}><Trash2 /></Button>
+              <Button type="button" variant="ghost" size="icon" aria-label={`Remover ${exercise.name}`} onClick={() => onChange({ ...plan, exercises: plan.exercises.filter((_, exerciseIndex) => exerciseIndex !== index) })}><Trash2 /></Button>
             </article>
           ))}
         </div>
-        <footer><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button type="button" onClick={() => onSave(plan)}><Save /> Guardar treino</Button></footer>
+        <footer><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button type="button" disabled={!plan.name.trim() || !plan.exercises.length} onClick={() => onSave(plan)}><Save /> {creating ? 'Criar e agendar treino' : 'Guardar treino'}</Button></footer>
       </section>
     </div></OverlayPortal>
   );

@@ -24,6 +24,7 @@ public class WorkoutTimerService extends Service {
     public static final String ACTION_SKIP = "com.thaidy.forma.timer.SKIP";
     public static final String ACTION_STOP = "com.thaidy.forma.timer.STOP";
     private static final String CHANNEL_ID = "fitide_workout_timer";
+    private static final String ALERT_CHANNEL_ID = "fitide_workout_timer_finished_v2";
     private static final int NOTIFICATION_ID = 2101;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -45,6 +46,10 @@ public class WorkoutTimerService extends Service {
                 else if (remaining > 1) remaining -= 1;
                 else advancePhase();
                 updateNotification();
+                if (!running && !freeMode && remaining == 0) {
+                    finishServiceKeepingNotification();
+                    return;
+                }
             }
             handler.postDelayed(this, 1000);
         }
@@ -54,7 +59,12 @@ public class WorkoutTimerService extends Service {
         super.onCreate();
         NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Cronómetro de treino", NotificationManager.IMPORTANCE_LOW);
         channel.setDescription("Mantém o cronómetro Fitide visível durante o treino.");
-        getSystemService(NotificationManager.class).createNotificationChannel(channel);
+        NotificationChannel alertChannel = new NotificationChannel(ALERT_CHANNEL_ID, "Fim dos timers", NotificationManager.IMPORTANCE_HIGH);
+        alertChannel.setDescription("Avisa com som e vibração quando um timer Fitide termina.");
+        alertChannel.enableVibration(true);
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        manager.createNotificationChannel(channel);
+        manager.createNotificationChannel(alertChannel);
         handler.postDelayed(ticker, 1000);
     }
 
@@ -76,6 +86,7 @@ public class WorkoutTimerService extends Service {
             running = true; updateNotification();
         } else if (ACTION_SKIP.equals(action)) {
             advancePhase(); updateNotification();
+            if (!running && !freeMode && remaining == 0) finishServiceKeepingNotification();
         } else if (ACTION_STOP.equals(action)) {
             stopTimer();
         }
@@ -87,7 +98,7 @@ public class WorkoutTimerService extends Service {
         if (restPhase) {
             round += 1; restPhase = false; remaining = workSeconds;
         } else if (round >= rounds) {
-            running = false; remaining = 0; updateNotification();
+            running = false; remaining = 0;
         } else if (restSeconds > 0) {
             restPhase = true; remaining = restSeconds;
         } else {
@@ -107,21 +118,31 @@ public class WorkoutTimerService extends Service {
         String phase = freeMode ? "Treino livre" : remaining == 0 ? "Concluído" : restPhase ? "Descanso" : "Trabalho";
         String detail = freeMode ? clock(elapsed) : clock(remaining) + " · ronda " + round + "/" + rounds;
         if (!running && remaining > 0) detail += " · pausado";
-        return new NotificationCompat.Builder(this, CHANNEL_ID)
+        boolean completed = !freeMode && remaining == 0;
+        return new NotificationCompat.Builder(this, completed ? ALERT_CHANNEL_ID : CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(timerName + " — " + phase)
             .setContentText(detail)
             .setContentIntent(contentIntent)
             .setOngoing(running)
-            .setOnlyAlertOnce(true)
-            .setSilent(true)
-            .setCategory(NotificationCompat.CATEGORY_STOPWATCH)
+            .setAutoCancel(completed)
+            .setOnlyAlertOnce(!completed)
+            .setSilent(!completed)
+            .setDefaults(completed ? Notification.DEFAULT_ALL : 0)
+            .setPriority(completed ? NotificationCompat.PRIORITY_HIGH : NotificationCompat.PRIORITY_LOW)
+            .setCategory(completed ? NotificationCompat.CATEGORY_ALARM : NotificationCompat.CATEGORY_STOPWATCH)
             .addAction(0, "Terminar", stopPending)
             .build();
     }
 
     private void updateNotification() {
         try { NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification()); } catch (SecurityException ignored) {}
+    }
+
+    private void finishServiceKeepingNotification() {
+        handler.removeCallbacks(ticker);
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH);
+        stopSelf();
     }
 
     private void stopTimer() {
