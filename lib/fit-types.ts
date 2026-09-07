@@ -104,6 +104,7 @@ export interface WorkoutExercise {
 
 export interface WorkoutPlan {
   id: string;
+  activityId?: string;
   name: string;
   source: 'WorkoutX' | 'Demonstração';
   createdAt: string;

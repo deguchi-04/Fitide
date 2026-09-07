@@ -25,6 +25,7 @@ import {
   LoaderCircle,
   Moon,
   Minus,
+  Pencil,
   Plus,
   RotateCcw,
   Save,
@@ -56,7 +57,7 @@ import {
 } from 'recharts';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
-import { Camera as CapacitorCamera } from '@capacitor/camera';
+import { Camera as CapacitorCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { HealthFitness } from '@capacitor/health-fitness';
 import { Button } from '@/components/ui/button';
 import {
@@ -117,6 +118,7 @@ interface WorkoutTimerNativePlugin {
 }
 
 interface NativeLabelPhotoResult {
+  path?: string;
   webPath?: string;
   thumbnail?: string;
   metadata?: {
@@ -495,7 +497,7 @@ async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
   const sourceY = Math.max(0, Math.round(crop.y * scaleY));
   const sourceWidth = Math.min(image.naturalWidth - sourceX, Math.max(1, Math.round(crop.width * scaleX)));
   const sourceHeight = Math.min(image.naturalHeight - sourceY, Math.max(1, Math.round(crop.height * scaleY)));
-  const outputScale = Math.min(1.25, 900 / sourceWidth, 1200 / sourceHeight);
+  const outputScale = Math.min(1.1, 720 / sourceWidth, 1000 / sourceHeight);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sourceWidth * outputScale));
   canvas.height = Math.max(1, Math.round(sourceHeight * outputScale));
@@ -637,16 +639,12 @@ function nativeLabelPhotoBlob(photo: NativeLabelPhotoResult) {
   return new Blob([bytes], { type: 'image/jpeg' });
 }
 
-async function nativeLabelPhotoFile(photo: NativeLabelPhotoResult) {
+function nativeLabelPhotoUrl(photo: NativeLabelPhotoResult) {
+  if (photo.webPath) return photo.webPath;
+  if (photo.path) return Capacitor.convertFileSrc(photo.path);
   const thumbnail = nativeLabelPhotoBlob(photo);
-  if (thumbnail) return new File([thumbnail], 'rotulo.jpg', { type: 'image/jpeg' });
-  if (!photo.webPath) throw new Error('photo-unavailable');
-  const response = await fetch(photo.webPath);
-  if (!response.ok) throw new Error('photo-unavailable');
-  const blob = await response.blob();
-  const format = photo.metadata?.format?.toLowerCase() ?? 'jpeg';
-  const extension = format === 'png' ? 'png' : 'jpg';
-  return new File([blob], `rotulo.${extension}`, { type: blob.type || `image/${format}` });
+  if (thumbnail) return URL.createObjectURL(thumbnail);
+  throw new Error('photo-unavailable');
 }
 
 function youtubeIdFromUrl(url: string) {
@@ -761,13 +759,18 @@ export default function FitApp() {
       const start = new Date(`${date}T00:00:00`);
       const end = new Date(start);
       end.setDate(end.getDate() + 1);
+      const readMetric = (variable: string, operation: 'SUM' | 'AVERAGE') =>
+        queryHealthMetric(variable, operation, start, end).catch(() => undefined);
       const [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent] = await Promise.all([
-        queryHealthMetric('STEPS', 'SUM', start, end),
-        queryHealthMetric('CALORIES_BURNED', 'SUM', start, end),
-        queryHealthMetric('HEART_RATE', 'AVERAGE', start, end),
-        queryHealthMetric('SLEEP', 'SUM', start, end),
-        queryHealthMetric('BODY_FAT_PERCENTAGE', 'AVERAGE', start, end),
+        readMetric('STEPS', 'SUM'),
+        readMetric('CALORIES_BURNED', 'SUM'),
+        readMetric('HEART_RATE', 'AVERAGE'),
+        readMetric('SLEEP', 'SUM'),
+        readMetric('BODY_FAT_PERCENTAGE', 'AVERAGE'),
       ]);
+      if ([steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent].every((metric) => metric === undefined)) {
+        throw new Error('O Health Connect não devolveu dados. Confirma as permissões e tenta novamente.');
+      }
       const snapshot: HealthSnapshot = {
         date,
         steps: steps === undefined ? undefined : Math.round(steps),
@@ -1071,7 +1074,8 @@ export default function FitApp() {
         onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
         onGo={setPage}
         healthSyncStatus={healthSyncStatus}
-        onHealthSync={() => syncHealthConnect({ requestPermissions: !state.healthSyncEnabled })}
+        healthSyncMessage={healthSyncMessage}
+        onHealthSync={() => syncHealthConnect({ requestPermissions: true })}
       />
     );
     if (targetPage === 'meals') return (
@@ -1134,7 +1138,7 @@ export default function FitApp() {
         onTouchEnd={handleSwipeEnd}
         onTouchCancel={resetSwipe}
       >
-        <header className="topbar">
+        <header className="topbar"><div className="topbar-inner">
           <div>
             <p className="eyebrow">
               {new Date(`${selectedDate}T12:00:00`)
@@ -1171,7 +1175,7 @@ export default function FitApp() {
                 .toUpperCase()}
             </button>
           </div>
-        </header>
+        </div></header>
 
         <div className="page-swipe-layer">
           <div
@@ -1444,6 +1448,7 @@ function TodayPage({
   onEditMeal,
   onGo,
   healthSyncStatus,
+  healthSyncMessage,
   onHealthSync,
 }: {
   state: AppState;
@@ -1460,6 +1465,7 @@ function TodayPage({
   onEditMeal: (meal: Meal) => void;
   onGo: (page: Page) => void;
   healthSyncStatus: 'idle' | 'syncing' | 'done' | 'error';
+  healthSyncMessage: string;
   onHealthSync: () => Promise<boolean>;
 }) {
   const caloriePercent = Math.min(
@@ -1665,7 +1671,7 @@ function TodayPage({
       </section>
       {(health || nativeHealth) && (
         <section className="health-strip">
-          <div><HeartPulse /><span><small>Health Connect</small><strong>{health?.steps?.toLocaleString('pt-PT') ?? '—'} passos</strong></span><button type="button" className="health-refresh" aria-label="Sincronizar Health Connect agora" disabled={!nativeHealth || healthSyncStatus === 'syncing'} onClick={() => void onHealthSync()}><RotateCcw className={healthSyncStatus === 'syncing' ? 'spin' : ''} /></button></div>
+          <div><HeartPulse /><span><small>Health Connect</small><strong>{health?.steps?.toLocaleString('pt-PT') ?? '—'} passos</strong>{healthSyncStatus === 'syncing' ? <em>A atualizar…</em> : healthSyncMessage ? <em className={healthSyncStatus === 'error' ? 'error' : ''}>{healthSyncMessage}</em> : health ? <em>Atualizado {new Date(health.syncedAt).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}</em> : <em>Toca para sincronizar</em>}</span><button type="button" className="health-refresh" aria-label="Sincronizar Health Connect agora" disabled={!nativeHealth || healthSyncStatus === 'syncing'} onClick={() => void onHealthSync()}><RotateCcw className={healthSyncStatus === 'syncing' ? 'spin' : ''} /></button></div>
           <div><small>Calorias ativas</small><strong>{health?.activeCalories === undefined ? '—' : `${Math.round(health.activeCalories)} kcal`}</strong></div>
           <div><small>Frequência média</small><strong>{health?.averageHeartRate === undefined ? '—' : `${Math.round(health.averageHeartRate)} bpm`}</strong></div>
           <div><small>Sono</small><strong>{health?.sleepMinutes === undefined ? '—' : `${Math.floor(health.sleepMinutes / 60)}h ${Math.round(health.sleepMinutes % 60)}m`}</strong></div>
@@ -2106,7 +2112,7 @@ function MealDialog({
   useViewportLock(Boolean(labelPhotoUrl));
 
   useEffect(() => () => {
-    if (labelPhotoUrl) URL.revokeObjectURL(labelPhotoUrl);
+    if (labelPhotoUrl.startsWith('blob:')) URL.revokeObjectURL(labelPhotoUrl);
   }, [labelPhotoUrl]);
 
   useEffect(() => () => {
@@ -2279,19 +2285,30 @@ function MealDialog({
     }
   }
 
+  function openNativeLabelCrop(photo: NativeLabelPhotoResult) {
+    const runId = labelScanRun.current + 1;
+    labelScanRun.current = runId;
+    setLabelScanProgress(0);
+    setLabelCrop({ unit: '%', x: 7, y: 18, width: 86, height: 62 });
+    setCompletedLabelCrop(undefined);
+    try {
+      setLabelPhotoUrl(nativeLabelPhotoUrl(photo));
+      setLabelScanStatus('idle');
+      setLabelScanMessage('Recorta a tabela e deixa a coluna “por porção” fora da seleção.');
+    } catch {
+      setLabelScanStatus('error');
+      setLabelScanMessage('A câmara não conseguiu devolver uma imagem utilizável. Tenta novamente.');
+    }
+  }
+
   useEffect(() => {
     if (!restoredLabelPhoto || restoredLabelPhotoHandled.current) return;
     restoredLabelPhotoHandled.current = true;
     setMode('Rótulo');
     setLabelScanStatus('reading');
     setLabelScanMessage('A recuperar a fotografia da câmara…');
-    void nativeLabelPhotoFile(restoredLabelPhoto)
-      .then((file) => openLabelCrop(file))
-      .catch(() => {
-        setLabelScanStatus('error');
-        setLabelScanMessage('O Android recuperou a app, mas não conseguiu devolver a fotografia. Tenta novamente.');
-      })
-      .finally(onRestoredLabelPhotoConsumed);
+    openNativeLabelCrop(restoredLabelPhoto);
+    onRestoredLabelPhotoConsumed();
   }, [restoredLabelPhoto]);
 
   async function takeNativeLabelPhoto() {
@@ -2299,16 +2316,17 @@ function MealDialog({
     setLabelScanProgress(0);
     setLabelScanMessage('A abrir a câmara…');
     try {
-      const photo = await CapacitorCamera.takePhoto({
-        quality: 72,
-        targetWidth: 960,
-        targetHeight: 960,
+      const photo = await CapacitorCamera.getPhoto({
+        quality: 65,
+        width: 900,
+        height: 1200,
         correctOrientation: true,
         saveToGallery: false,
-        editable: 'no',
-        includeMetadata: false,
+        allowEditing: false,
+        resultType: CameraResultType.Uri,
+        source: CameraSource.Camera,
       });
-      await openLabelCrop(await nativeLabelPhotoFile(photo));
+      openNativeLabelCrop(photo);
     } catch (error) {
       if (error instanceof Error && /cancel/i.test(error.message)) {
         setLabelScanStatus('idle');
@@ -2750,11 +2768,11 @@ function MealDialog({
                             wDragHandle: 'Lado esquerdo',
                           }}
                         >
-                          <img
+                           <img
                             ref={labelCropImage}
                             src={labelPhotoUrl}
                             alt="Foto do rótulo para recortar"
-                            onLoad={(event) => {
+                             onLoad={(event) => {
                               const image = event.currentTarget;
                               setCompletedLabelCrop({
                                 unit: 'px',
@@ -2762,9 +2780,14 @@ function MealDialog({
                                 y: image.height * 0.18,
                                 width: image.width * 0.86,
                                 height: image.height * 0.62,
-                              });
-                            }}
-                          />
+                               });
+                             }}
+                             onError={() => {
+                               closeLabelCrop();
+                               setLabelScanStatus('error');
+                               setLabelScanMessage('Não consegui abrir esta fotografia. Tenta novamente mais perto da tabela.');
+                             }}
+                           />
                         </ReactCrop>
                       </div>
                       <footer>
@@ -2944,7 +2967,8 @@ function WorkoutPage({
   const duePlans = state.workoutPlans
     .filter((plan) => !plan.days?.length || plan.days.includes(selectedDay))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'));
-  const dueActivities = state.activities.filter((activity) => activity.days.includes(selectedDay));
+  const linkedActivityIds = new Set(duePlans.map((plan) => plan.activityId).filter(Boolean));
+  const dueActivities = state.activities.filter((activity) => activity.days.includes(selectedDay) && !linkedActivityIds.has(activity.id));
   const scheduleItems = [
     ...duePlans.map((plan) => ({ type: 'plan' as const, id: plan.id, time: plan.time, plan })),
     ...dueActivities.map((activity) => ({ type: 'activity' as const, id: activity.id, time: activity.time, activity })),
@@ -4326,15 +4350,18 @@ function SettingsPage({
   const [activityName, setActivityName] = useState('Musculação');
   const [minutes, setMinutes] = useState(60);
   const [met, setMet] = useState(5);
-  const [days, setDays] = useState<number[]>([1, 3, 5]);
+  const [days, setDays] = useState<number[]>([]);
   const [activityTime, setActivityTime] = useState('18:00');
+  const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
   const [split, setSplit] = useState('full_body');
   const [bodyFocus, setBodyFocus] = useState<string[]>([]);
   const [level, setLevel] = useState('intermediate');
-  const [workoutDays, setWorkoutDays] = useState<number[]>([1, 3, 5]);
-  const [workoutTime, setWorkoutTime] = useState('18:00');
   const [generating, setGenerating] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<WorkoutPlan | null>(null);
+  const [exerciseAlternatives, setExerciseAlternatives] = useState<WorkoutExercise[]>([]);
+  const [loadingAlternatives, setLoadingAlternatives] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  useViewportLock(Boolean(editingPlan));
   const draftMaintenance = tdee(profile, state.activities);
   const draftBaseMaintenance = sedentaryTdee(profile);
   const draftExerciseAverage = Math.round(exerciseCaloriesPerWeek(profile, state.activities) / 7);
@@ -4350,33 +4377,59 @@ function SettingsPage({
     setGoals(next);
     setState((current) => ({ ...current, profile, goals: next }));
   }
-  function addActivity() {
+  function resetActivityBuilder() {
+    setEditingActivityId(null);
+    setActivityPreset('Musculação');
+    setActivityName('Musculação');
+    setMinutes(60);
+    setMet(5);
+    setDays([]);
+    setActivityTime('18:00');
+  }
+  function saveActivity() {
     if (!activityName.trim() || !days.length) return;
     const activity: Activity = {
-      id: uid(),
+      id: editingActivityId ?? uid(),
       name: activityName.trim(),
       days,
       minutes,
       met,
       time: activityTime,
     };
-    const nextActivities = [...state.activities, activity];
+    const nextActivities = editingActivityId
+      ? state.activities.map((item) => item.id === editingActivityId ? activity : item)
+      : [...state.activities, activity];
     const nextGoals = alignCalorieGoal(goals, profile, nextActivities);
     setGoals(nextGoals);
-    setState((current) => ({ ...current, activities: nextActivities, goals: nextGoals }));
-    if (activityPreset === 'Musculação') {
-      setWorkoutDays([...days]);
-      setWorkoutTime(activityTime);
-    }
+    setState((current) => ({
+      ...current,
+      activities: nextActivities,
+      workoutPlans: current.workoutPlans.map((plan) => plan.activityId === activity.id
+        ? { ...plan, days: [...activity.days], time: activity.time }
+        : plan),
+      goals: nextGoals,
+    }));
+    resetActivityBuilder();
+  }
+  function editActivity(activity: Activity) {
+    setEditingActivityId(activity.id);
+    const preset = activityPresets.find((item) => item.name === activity.name);
+    setActivityPreset(preset?.name ?? (normalizeText(activity.name).includes('musculacao') ? 'Musculação' : 'Outro'));
+    setActivityName(activity.name);
+    setMinutes(activity.minutes);
+    setMet(activity.met);
+    setDays([...activity.days]);
+    setActivityTime(activity.time ?? '18:00');
   }
   function removeActivity(id: string) {
     const nextActivities = state.activities.filter((activity) => activity.id !== id);
     const nextGoals = alignCalorieGoal(goals, profile, nextActivities);
     setGoals(nextGoals);
-    setState((current) => ({ ...current, activities: nextActivities, goals: nextGoals }));
+    setState((current) => ({ ...current, activities: nextActivities, workoutPlans: current.workoutPlans.filter((plan) => plan.activityId !== id), goals: nextGoals }));
+    if (editingActivityId === id) resetActivityBuilder();
   }
   async function generateWorkout() {
-    if (!workoutDays.length) return;
+    if (!days.length) return;
     setGenerating(true);
     try {
       const response = await fetch('/api/workout', {
@@ -4391,21 +4444,61 @@ function SettingsPage({
       });
       if (!response.ok) throw new Error('workout');
       const result = (await response.json()) as { source: WorkoutPlan['source']; exercises: WorkoutPlan['exercises'] };
+      const activityId = uid();
       const plan: WorkoutPlan = {
         id: uid(),
+        activityId,
         name: bodyFocus.length
           ? `Mistura: ${bodyFocus.map((value) => muscleOptions.find((item) => item.value === value)?.label).filter(Boolean).join(', ')}`
           : splitLabels[split],
         source: result.source,
         createdAt: new Date().toISOString(),
-        days: workoutDays,
-        time: workoutTime,
+        days: [...days],
+        time: activityTime,
         exercises: result.exercises,
       };
-      setState((current) => ({ ...current, workoutPlans: [...current.workoutPlans, plan] }));
+      const activity: Activity = {
+        id: activityId,
+        name: `Musculação · ${plan.name}`,
+        days: [...days],
+        minutes,
+        met,
+        time: activityTime,
+      };
+      const nextActivities = [...state.activities, activity];
+      const nextGoals = alignCalorieGoal(goals, profile, nextActivities);
+      setGoals(nextGoals);
+      setState((current) => ({ ...current, activities: [...current.activities, activity], workoutPlans: [...current.workoutPlans, plan], goals: nextGoals }));
+      setDays([]);
+      setBodyFocus([]);
+      setSplit('full_body');
     } finally {
       setGenerating(false);
     }
+  }
+  async function openWorkoutEditor(plan: WorkoutPlan) {
+    setEditingPlan({ ...plan, days: [...(plan.days ?? [])], exercises: plan.exercises.map((exercise) => ({ ...exercise })) });
+    const currentExercises = state.workoutPlans.flatMap((item) => item.exercises);
+    setExerciseAlternatives(currentExercises.filter((exercise, index, items) => items.findIndex((item) => item.id === exercise.id) === index));
+    setLoadingAlternatives(true);
+    try {
+      const response = await fetch('/api/workout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'catalog', level }),
+      });
+      if (!response.ok) return;
+      const result = (await response.json()) as { exercises?: WorkoutExercise[] };
+      if (result.exercises?.length) {
+        setExerciseAlternatives((current) => [...current, ...result.exercises!].filter((exercise, index, items) => items.findIndex((item) => item.id === exercise.id) === index));
+      }
+    } finally {
+      setLoadingAlternatives(false);
+    }
+  }
+  function saveWorkoutPlan(plan: WorkoutPlan) {
+    setState((current) => ({ ...current, workoutPlans: current.workoutPlans.map((item) => item.id === plan.id ? plan : item) }));
+    setEditingPlan(null);
   }
   return (
     <div className="content-page page-enter">
@@ -4699,6 +4792,15 @@ function SettingsPage({
                     type="button"
                     variant="ghost"
                     size="icon"
+                    aria-label={`Editar atividade ${activity.name}`}
+                    onClick={() => editActivity(activity)}
+                  >
+                    <Pencil />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
                     aria-label={`Apagar atividade ${activity.name}`}
                     onClick={() => removeActivity(activity.id)}
                   >
@@ -4757,9 +4859,14 @@ function SettingsPage({
                   ))}
                 </div>
               </Field>
-              <Button type="button" variant="outline" onClick={addActivity}>
-                <Plus /> Adicionar atividade
-              </Button>
+              {(activityPreset !== 'Musculação' || editingActivityId) && (
+                <div className="activity-builder-actions">
+                  {editingActivityId && <Button type="button" variant="ghost" onClick={resetActivityBuilder}>Cancelar edição</Button>}
+                  <Button type="button" variant="outline" onClick={saveActivity}>
+                    {editingActivityId ? <Save /> : <Plus />} {editingActivityId ? 'Guardar atividade' : 'Adicionar atividade'}
+                  </Button>
+                </div>
+              )}
             </div>
             {activityPreset === 'Musculação' && <>
               <div className="routine-divider" />
@@ -4769,7 +4876,7 @@ function SettingsPage({
                 <h3>Sugerir nova rotina</h3>
                 <p>A rotina ficará agendada nos dias e hora escolhidos e aparecerá no ecrã Treino.</p>
               </div>
-              <div className="form-grid three">
+              <div className="form-grid two">
                 <Field label="Divisão">
                   <select value={split} onChange={(event) => { setSplit(event.target.value); setBodyFocus([]); }}>
                     {Object.entries(splitLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
@@ -4780,29 +4887,23 @@ function SettingsPage({
                     <option value="beginner">Iniciante</option><option value="intermediate">Intermédio</option><option value="advanced">Avançado</option>
                   </select>
                 </Field>
-                <Field label="Hora">
-                  <Input type="time" value={workoutTime} onChange={(event) => setWorkoutTime(event.target.value)} />
-                </Field>
               </div>
               <Field label="Misturar grupos (opcional)">
                 <div className="muscle-picker">
                   {muscleOptions.map((muscle) => <button type="button" key={muscle.value} className={bodyFocus.includes(muscle.value) ? 'selected' : ''} onClick={() => setBodyFocus((current) => current.includes(muscle.value) ? current.filter((value) => value !== muscle.value) : [...current, muscle.value])}>{muscle.label}</button>)}
                 </div>
               </Field>
-              <Field label="Dias do treino">
-                <div className="day-picker">
-                  {fullDayNames.map((day, index) => <button type="button" key={day} className={workoutDays.includes(index) ? 'selected' : ''} onClick={() => setWorkoutDays((current) => current.includes(index) ? current.filter((value) => value !== index) : [...current, index])}>{day}</button>)}
-                </div>
-              </Field>
-              <Button type="button" onClick={generateWorkout} disabled={generating || !workoutDays.length}>
+              <Button type="button" onClick={generateWorkout} disabled={generating || !days.length}>
                 {generating ? <LoaderCircle className="spin" /> : <Sparkles />}{generating ? 'A gerar…' : 'Gerar e agendar rotina'}
               </Button>
+              {!days.length && <small className="routine-empty-hint">Escolhe acima os dias da nova rotina. Depois de gerar, o formulário fica limpo para agendares outra.</small>}
               <div className="scheduled-plans">
                 {state.workoutPlans.map((plan) => (
                   <div key={plan.id}>
                     <Dumbbell />
                     <div><strong>{plan.name}</strong><small>{plan.days?.length ? plan.days.map((day) => fullDayNames[day]).join(', ') : 'Sem dias agendados'} · {plan.time ?? 'Sem hora'} · {plan.exercises.length} exercícios</small></div>
-                    <Button type="button" variant="ghost" size="icon" aria-label={`Apagar rotina ${plan.name}`} onClick={() => setState((current) => ({ ...current, workoutPlans: current.workoutPlans.filter((item) => item.id !== plan.id) }))}><Trash2 /></Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void openWorkoutEditor(plan)}><Pencil /> Abrir treino</Button>
+                    <Button type="button" variant="ghost" size="icon" aria-label={`Apagar rotina ${plan.name}`} onClick={() => setState((current) => ({ ...current, activities: plan.activityId ? current.activities.filter((activity) => activity.id !== plan.activityId) : current.activities, workoutPlans: current.workoutPlans.filter((item) => item.id !== plan.id) }))}><Trash2 /></Button>
                   </div>
                 ))}
               </div>
@@ -4867,6 +4968,16 @@ function SettingsPage({
           </p>
         </div>
       </form>
+      {editingPlan && (
+        <WorkoutPlanEditorDialog
+          plan={editingPlan}
+          alternatives={exerciseAlternatives}
+          loadingAlternatives={loadingAlternatives}
+          onChange={setEditingPlan}
+          onSave={saveWorkoutPlan}
+          onClose={() => setEditingPlan(null)}
+        />
+      )}
       {confirmReset && (
         <OverlayPortal><div className="dialog-backdrop" role="presentation">
           <section className="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="reset-title">
@@ -4877,6 +4988,79 @@ function SettingsPage({
         </div></OverlayPortal>
       )}
     </div>
+  );
+}
+
+function WorkoutPlanEditorDialog({
+  plan,
+  alternatives,
+  loadingAlternatives,
+  onChange,
+  onSave,
+  onClose,
+}: {
+  plan: WorkoutPlan;
+  alternatives: WorkoutExercise[];
+  loadingAlternatives: boolean;
+  onChange: (plan: WorkoutPlan) => void;
+  onSave: (plan: WorkoutPlan) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const close = (event: Event) => { event.preventDefault(); onClose(); };
+    window.addEventListener('fitide-back', close);
+    return () => window.removeEventListener('fitide-back', close);
+  }, [onClose]);
+
+  function patchExercise(index: number, patch: Partial<WorkoutExercise>) {
+    onChange({ ...plan, exercises: plan.exercises.map((exercise, exerciseIndex) => exerciseIndex === index ? { ...exercise, ...patch } : exercise) });
+  }
+
+  function replaceExercise(index: number, replacementId: string) {
+    const replacement = alternatives.find((exercise) => exercise.id === replacementId);
+    if (!replacement) return;
+    const current = plan.exercises[index];
+    patchExercise(index, {
+      ...replacement,
+      id: `${replacement.id}-${uid()}`,
+      sets: current.sets,
+      reps: current.reps,
+      restSeconds: current.restSeconds,
+    });
+  }
+
+  return (
+    <OverlayPortal><div className="dialog-backdrop workout-editor-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="workout-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="workout-editor-title">
+        <header>
+          <div><p className="eyebrow">ROTINA SEMANAL</p><h2 id="workout-editor-title">Editar {plan.name}</h2><small>{plan.exercises.length} exercícios · {plan.time ?? 'Sem hora'}</small></div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Fechar editor" onClick={onClose}><X /></Button>
+        </header>
+        <div className="workout-editor-list">
+          {plan.exercises.map((exercise, index) => (
+            <article key={`${exercise.id}-${index}`} className="workout-editor-exercise">
+              <div className="workout-editor-number">{String(index + 1).padStart(2, '0')}</div>
+              <div className="workout-editor-main">
+                <Field label="Exercício"><Input value={exercise.name} onChange={(event) => patchExercise(index, { name: event.target.value })} /></Field>
+                <Field label={loadingAlternatives ? 'A carregar alternativas…' : 'Substituir por exercício existente'}>
+                  <select value="" disabled={loadingAlternatives || !alternatives.length} onChange={(event) => replaceExercise(index, event.target.value)}>
+                    <option value="">Escolher substituição…</option>
+                    {alternatives.filter((item) => item.name !== exercise.name).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.target}</option>)}
+                  </select>
+                </Field>
+                <div className="workout-editor-values">
+                  <Field label="Séries"><NumberInput value={exercise.sets} min={1} max={12} onChange={(sets) => patchExercise(index, { sets })} /></Field>
+                  <Field label="Repetições"><Input value={exercise.reps} onChange={(event) => patchExercise(index, { reps: event.target.value })} /></Field>
+                  <Field label="Descanso (s)"><NumberInput value={exercise.restSeconds} min={0} max={600} step="5" onChange={(restSeconds) => patchExercise(index, { restSeconds })} /></Field>
+                </div>
+              </div>
+              <Button type="button" variant="ghost" size="icon" aria-label={`Remover ${exercise.name}`} disabled={plan.exercises.length <= 1} onClick={() => onChange({ ...plan, exercises: plan.exercises.filter((_, exerciseIndex) => exerciseIndex !== index) })}><Trash2 /></Button>
+            </article>
+          ))}
+        </div>
+        <footer><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button type="button" onClick={() => onSave(plan)}><Save /> Guardar treino</Button></footer>
+      </section>
+    </div></OverlayPortal>
   );
 }
 
@@ -4966,6 +5150,7 @@ function NumberInput({
   const increment = Number(effectiveStep);
   const precision = effectiveStep.includes('.') ? effectiveStep.split('.')[1].length : 0;
   const [customWheelValue, setCustomWheelValue] = useState<number | null>(null);
+  const [wheelSyncToken, setWheelSyncToken] = useState(0);
   const options = useMemo(() => {
     const values: number[] = [];
     const count = Math.floor((effectiveMax - effectiveMin) / increment);
@@ -4985,6 +5170,7 @@ function NumberInput({
   const [manualDraft, setManualDraft] = useState(String(initialValue));
   const wheelRef = useRef<HTMLDivElement>(null);
   const manualInputFocused = useRef(false);
+  const pendingWheelSync = useRef<number | null>(null);
   const itemHeight = 56;
   useViewportLock(open);
   useEffect(() => {
@@ -5012,12 +5198,14 @@ function NumberInput({
 
   useEffect(() => {
     if (!open) return;
-    const index = Math.max(0, options.indexOf(draft));
+    const targetValue = pendingWheelSync.current ?? draft;
+    const index = Math.max(0, options.indexOf(targetValue));
+    pendingWheelSync.current = null;
     const frame = window.requestAnimationFrame(() => {
       if (wheelRef.current) wheelRef.current.scrollTop = index * itemHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [draft, draftUnit, open, options]);
+  }, [draftUnit, open, options, wheelSyncToken]);
 
   function selectAtScroll() {
     if (manualInputFocused.current) return;
@@ -5038,9 +5226,11 @@ function NumberInput({
 
   function applyManualDraftToWheel() {
     const parsed = parsedManualValue();
+    pendingWheelSync.current = parsed;
     setCustomWheelValue(parsed);
     setDraft(parsed);
     setManualDraft(formatOption(parsed));
+    setWheelSyncToken((current) => current + 1);
   }
 
   function commitDraftAndClose() {
@@ -5062,6 +5252,7 @@ function NumberInput({
           const openingStep = openingOption?.step ?? step;
           const openingPrecision = openingStep.includes('.') ? openingStep.split('.')[1].length : 0;
           const openingValue = value === '' ? openingOption?.defaultValue ?? min : value;
+          pendingWheelSync.current = openingValue;
           setDraftUnit(openingUnit);
           setCustomWheelValue(null);
           setDraft(openingValue);
@@ -5095,9 +5286,10 @@ function NumberInput({
                     type="button"
                     key={option.value}
                     className={draftUnit === option.value ? 'selected' : ''}
-                    onClick={() => {
-                      const nextPrecision = option.step.includes('.') ? option.step.split('.')[1].length : 0;
-                      setDraftUnit(option.value);
+                     onClick={() => {
+                       const nextPrecision = option.step.includes('.') ? option.step.split('.')[1].length : 0;
+                       pendingWheelSync.current = option.defaultValue;
+                       setDraftUnit(option.value);
                       setCustomWheelValue(null);
                       setDraft(option.defaultValue);
                       setManualDraft(formatNumber(option.defaultValue, nextPrecision));

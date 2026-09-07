@@ -183,6 +183,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const body = (await request.json()) as {
+    action?: 'generate' | 'catalog';
     goal?: string;
     level?: string;
     split?: string;
@@ -192,6 +193,24 @@ export async function POST(request: Request) {
   const split = body.split && splitFocus[body.split] ? body.split : 'full_body';
   const focus = body.bodyFocus?.length ? body.bodyFocus : splitFocus[split];
   const apiKey = env.WORKOUTX_API_KEY;
+
+  if (body.action === 'catalog') {
+    if (apiKey) {
+      try {
+        const exercises = await catalogWorkout(
+          apiKey,
+          body.bodyFocus?.length
+            ? body.bodyFocus
+            : ['chest', 'back', 'shoulders', 'upper legs', 'upper arms', 'waist'],
+          body.level ?? 'intermediate',
+        );
+        if (exercises.length) return Response.json({ source: 'WorkoutX', exercises });
+      } catch {
+        // Keep the editor usable with the local catalogue.
+      }
+    }
+    return Response.json({ source: 'Demonstração', exercises: fallbackBase });
+  }
 
   if (apiKey) {
     const params = new URLSearchParams({
