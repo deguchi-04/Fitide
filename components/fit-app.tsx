@@ -84,7 +84,6 @@ import {
   suggestedGoals,
   sumNutrients,
   tdee,
-  tdeeForDay,
   weeksToGoal,
 } from '@/lib/calculations';
 import { defaultState } from '@/lib/default-state';
@@ -137,7 +136,7 @@ type Page =
   | 'settings';
 type ChartRange = 'week' | 'month' | 'year';
 const pageLabels: Record<Page, string> = {
-  today: 'Hoje',
+  today: 'Home',
   meals: 'Refeições',
   workout: 'Treino',
   judo: 'Judô',
@@ -146,22 +145,22 @@ const pageLabels: Record<Page, string> = {
   settings: 'Definições',
 };
 const navItems = [
-  { id: 'today' as Page, label: 'Hoje', icon: Home },
+  { id: 'today' as Page, label: 'Home', icon: Home },
   { id: 'meals' as Page, label: 'Refeições', icon: Utensils },
   { id: 'workout' as Page, label: 'Treino', icon: Dumbbell },
   { id: 'judo' as Page, label: 'Judô', icon: BookOpen },
   { id: 'calendar' as Page, label: 'Calendário', icon: CalendarDays },
   { id: 'progress' as Page, label: 'Progresso', icon: Scale },
 ];
-const pageOrder: Page[] = ['calendar', 'today', 'meals', 'workout', 'judo', 'progress', 'settings'];
 const mobileNavItems = [
   { id: 'calendar' as Page, label: 'Calendário', icon: CalendarDays },
-  { id: 'today' as Page, label: 'Hoje', icon: Home },
+  { id: 'today' as Page, label: 'Home', icon: Home },
   { id: 'meals' as Page, label: 'Refeições', icon: Utensils },
   { id: 'workout' as Page, label: 'Treino', icon: Dumbbell },
   { id: 'progress' as Page, label: 'Progresso', icon: Scale },
   { id: 'settings' as Page, label: 'Definições', icon: Settings },
 ];
+const swipePageOrder = mobileNavItems.map((item) => item.id);
 const dayNames = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 const fullDayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const splitLabels: Record<string, string> = {
@@ -664,12 +663,22 @@ function alignCalorieGoal(goals: AppState['goals'], profile: Profile, activities
 }
 
 function mergeState(saved: Partial<AppState>): AppState {
+  const savedScores = saved.judoProfile?.scores as
+    | (Partial<AppState['judoProfile']['scores']> & {
+        technique?: number;
+        physical?: number;
+        conditioning?: number;
+      })
+    | undefined;
+  const legacyPhysical = [savedScores?.physical, savedScores?.conditioning]
+    .filter((value): value is number => typeof value === 'number');
   const merged: AppState = {
     ...defaultState,
     ...saved,
     profile: { ...defaultState.profile, ...saved.profile },
     goals: { ...defaultState.goals, ...saved.goals },
     activities: saved.activities ?? [],
+    activityCheckIns: saved.activityCheckIns ?? [],
     meals: saved.meals ?? [],
     customFoods: saved.customFoods ?? [],
     weights: saved.weights ?? [],
@@ -683,13 +692,19 @@ function mergeState(saved: Partial<AppState>): AppState {
       ...defaultState.judoProfile,
       ...saved.judoProfile,
       scores: {
-        ...defaultState.judoProfile.scores,
-        ...saved.judoProfile?.scores,
+        tachiWaza: savedScores?.tachiWaza ?? savedScores?.technique ?? defaultState.judoProfile.scores.tachiWaza,
+        neWaza: savedScores?.neWaza ?? savedScores?.technique ?? defaultState.judoProfile.scores.neWaza,
+        physicalCondition: savedScores?.physicalCondition
+          ?? (legacyPhysical.length ? Math.round(legacyPhysical.reduce((sum, value) => sum + value, 0) / legacyPhysical.length) : defaultState.judoProfile.scores.physicalCondition),
+        mental: savedScores?.mental ?? defaultState.judoProfile.scores.mental,
+        knowledge: savedScores?.knowledge ?? defaultState.judoProfile.scores.knowledge,
+        matchPrep: savedScores?.matchPrep ?? defaultState.judoProfile.scores.matchPrep,
       },
       tokuiWazaIds: saved.judoProfile?.tokuiWazaIds ?? [],
       learningGoals: saved.judoProfile?.learningGoals ?? [],
     },
     healthSnapshots: saved.healthSnapshots ?? [],
+    healthSyncEnabled: saved.healthSyncEnabled ?? false,
   };
   merged.goals = alignCalorieGoal(merged.goals, merged.profile, merged.activities);
   return merged;
@@ -712,6 +727,75 @@ export default function FitApp() {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [swipeNeighbor, setSwipeNeighbor] = useState<Page | null>(null);
   const [swipeAnimating, setSwipeAnimating] = useState(false);
+  const [healthSyncStatus, setHealthSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
+  const [healthSyncMessage, setHealthSyncMessage] = useState('');
+  const healthSyncInFlight = useRef(false);
+  const healthLastSyncRef = useRef(0);
+
+  const syncHealthConnect = useCallback(async ({ requestPermissions = false, silent = false }: { requestPermissions?: boolean; silent?: boolean } = {}) => {
+    if (!Capacitor.isNativePlatform() || healthSyncInFlight.current) return false;
+    healthSyncInFlight.current = true;
+    if (!silent) {
+      setHealthSyncStatus('syncing');
+      setHealthSyncMessage(requestPermissions ? 'A pedir autorização no Health Connect…' : 'A sincronizar os dados de hoje…');
+    }
+    try {
+      if (requestPermissions) {
+        const inactive = JSON.stringify({ IsActive: false, AccessType: 'READ' });
+        await HealthFitness.requestHealthPermissions({
+          customPermissions: JSON.stringify([
+            { Variable: 'STEPS', AccessType: 'READ' },
+            { Variable: 'CALORIES_BURNED', AccessType: 'READ' },
+            { Variable: 'HEART_RATE', AccessType: 'READ' },
+            { Variable: 'SLEEP', AccessType: 'READ' },
+            { Variable: 'BODY_FAT_PERCENTAGE', AccessType: 'READ' },
+          ]),
+          allVariables: inactive,
+          fitnessVariables: inactive,
+          healthVariables: inactive,
+          profileVariables: inactive,
+          workoutVariables: inactive,
+        });
+      }
+      const date = localDateKey();
+      const start = new Date(`${date}T00:00:00`);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 1);
+      const [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent] = await Promise.all([
+        queryHealthMetric('STEPS', 'SUM', start, end),
+        queryHealthMetric('CALORIES_BURNED', 'SUM', start, end),
+        queryHealthMetric('HEART_RATE', 'AVERAGE', start, end),
+        queryHealthMetric('SLEEP', 'SUM', start, end),
+        queryHealthMetric('BODY_FAT_PERCENTAGE', 'AVERAGE', start, end),
+      ]);
+      const snapshot: HealthSnapshot = {
+        date,
+        steps: steps === undefined ? undefined : Math.round(steps),
+        activeCalories,
+        averageHeartRate,
+        sleepMinutes,
+        bodyFatPercent,
+        syncedAt: new Date().toISOString(),
+      };
+      healthLastSyncRef.current = Date.now();
+      setState((current) => ({
+        ...current,
+        healthSyncEnabled: true,
+        healthSnapshots: [...current.healthSnapshots.filter((item) => item.date !== date), snapshot],
+      }));
+      setHealthSyncStatus('done');
+      setHealthSyncMessage('Dados de hoje sincronizados.');
+      return true;
+    } catch (error) {
+      if (!silent) {
+        setHealthSyncStatus('error');
+        setHealthSyncMessage(error instanceof Error ? error.message : 'Não foi possível ligar ao Health Connect.');
+      }
+      return false;
+    } finally {
+      healthSyncInFlight.current = false;
+    }
+  }, []);
 
   useEffect(() => {
     fetch('/api/state')
@@ -737,6 +821,25 @@ export default function FitApp() {
     document.documentElement.classList.toggle('dark', theme === 'dark');
     document.documentElement.style.colorScheme = theme;
   }, [state.theme]);
+
+  useEffect(() => {
+    if (!loaded || !state.healthSyncEnabled || !Capacitor.isNativePlatform()) return;
+    const syncIfStale = () => {
+      if (Date.now() - healthLastSyncRef.current >= 14 * 60 * 1000) {
+        void syncHealthConnect({ silent: true });
+      }
+    };
+    syncIfStale();
+    const interval = window.setInterval(syncIfStale, 15 * 60 * 1000);
+    let removeListener: (() => Promise<void>) | undefined;
+    void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) syncIfStale();
+    }).then((handle) => { removeListener = () => handle.remove(); });
+    return () => {
+      window.clearInterval(interval);
+      void removeListener?.();
+    };
+  }, [loaded, state.healthSyncEnabled, syncHealthConnect]);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -862,10 +965,10 @@ export default function FitApp() {
       ...defaultState,
       profile: { ...defaultState.profile },
       goals: { ...defaultState.goals },
-      activities: [], meals: [], customFoods: [], weights: [], water: [], fasts: [], workoutPlans: [], workoutSessions: [],
+      activities: [], activityCheckIns: [], meals: [], customFoods: [], weights: [], water: [], fasts: [], workoutPlans: [], workoutSessions: [],
       intervalPresets: [...defaultState.intervalPresets], judoPractices: [],
       judoProfile: { ...defaultState.judoProfile, scores: { ...defaultState.judoProfile.scores }, tokuiWazaIds: [], learningGoals: [] },
-      healthSnapshots: [],
+      healthSnapshots: [], healthSyncEnabled: false,
     });
   }
 
@@ -879,7 +982,7 @@ export default function FitApp() {
 
   function handleSwipeStart(event: React.TouchEvent<HTMLElement>) {
     const target = event.target as HTMLElement;
-    if (event.touches.length !== 1 || target.closest('input, textarea, select, [role="dialog"], .number-wheel-card, .chart-range')) {
+    if (!swipePageOrder.includes(page) || event.touches.length !== 1 || target.closest('input, textarea, select, [role="dialog"], .number-wheel-card, .chart-range')) {
       swipeStart.current = null;
       return;
     }
@@ -902,14 +1005,14 @@ export default function FitApp() {
     }
     if (swipeAxis.current !== 'x') return;
     event.preventDefault();
-    const index = pageOrder.indexOf(page);
+    const index = swipePageOrder.indexOf(page);
     const neighborIndex = dx < 0 ? index + 1 : index - 1;
-    if (neighborIndex < 0 || neighborIndex >= pageOrder.length) {
+    if (neighborIndex < 0 || neighborIndex >= swipePageOrder.length) {
       setSwipeNeighbor(null);
       setSwipeOffset(dx * 0.18);
       return;
     }
-    setSwipeNeighbor(pageOrder[neighborIndex]);
+    setSwipeNeighbor(swipePageOrder[neighborIndex]);
     setSwipeOffset(dx);
   }
 
@@ -922,16 +1025,16 @@ export default function FitApp() {
     }
     const touch = event.changedTouches[0];
     const dx = touch.clientX - start.x;
-    const index = pageOrder.indexOf(page);
-    const nextIndex = dx < 0 ? Math.min(pageOrder.length - 1, index + 1) : Math.max(0, index - 1);
-    const nextPage = pageOrder[nextIndex];
+    const index = swipePageOrder.indexOf(page);
+    const nextIndex = dx < 0 ? Math.min(swipePageOrder.length - 1, index + 1) : Math.max(0, index - 1);
+    const nextPage = swipePageOrder[nextIndex];
     const shouldChange = nextIndex !== index && Math.abs(dx) >= Math.min(92, event.currentTarget.clientWidth * 0.22);
     setSwipeAnimating(true);
     setSwipeOffset(shouldChange ? (dx < 0 ? -event.currentTarget.clientWidth : event.currentTarget.clientWidth) : 0);
     window.setTimeout(() => {
       if (shouldChange) setPage(nextPage);
       resetSwipe();
-    }, 240);
+    }, 320);
   }
 
   if (!loaded) {
@@ -955,6 +1058,7 @@ export default function FitApp() {
     if (targetPage === 'today') return (
       <TodayPage
         state={state}
+        setState={setState}
         date={selectedDate}
         consumed={consumed}
         water={water}
@@ -966,6 +1070,8 @@ export default function FitApp() {
         onAddMeal={() => { setEditingMeal(null); setMealOpen(true); }}
         onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
         onGo={setPage}
+        healthSyncStatus={healthSyncStatus}
+        onHealthSync={() => syncHealthConnect({ requestPermissions: !state.healthSyncEnabled })}
       />
     );
     if (targetPage === 'meals') return (
@@ -990,7 +1096,7 @@ export default function FitApp() {
       />
     );
     if (targetPage === 'progress') return <ProgressPage state={state} setState={setState} />;
-    return <SettingsPage state={state} setState={setState} onReset={resetProfile} />;
+    return <SettingsPage state={state} setState={setState} onReset={resetProfile} healthSyncStatus={healthSyncStatus} healthSyncMessage={healthSyncMessage} onHealthSync={() => syncHealthConnect({ requestPermissions: !state.healthSyncEnabled })} />;
   }
 
   return (
@@ -1079,7 +1185,7 @@ export default function FitApp() {
               className={`page-swipe-neighbor ${swipeAnimating ? 'animating' : ''}`}
               aria-hidden="true"
               style={{
-                transform: `translate3d(calc(${swipeNeighbor === pageOrder[pageOrder.indexOf(page) + 1] ? '100%' : '-100%'} + ${swipeOffset}px),0,0)`,
+                transform: `translate3d(calc(${swipeNeighbor === swipePageOrder[swipePageOrder.indexOf(page) + 1] ? '100%' : '-100%'} + ${swipeOffset}px),0,0)`,
               }}
             >
               {renderPage(swipeNeighbor)}
@@ -1325,6 +1431,7 @@ function Onboarding({
 
 function TodayPage({
   state,
+  setState,
   date,
   consumed,
   water,
@@ -1336,8 +1443,11 @@ function TodayPage({
   onAddMeal,
   onEditMeal,
   onGo,
+  healthSyncStatus,
+  onHealthSync,
 }: {
   state: AppState;
+  setState: React.Dispatch<React.SetStateAction<AppState>>;
   date: string;
   consumed: Nutrients;
   water: number;
@@ -1349,6 +1459,8 @@ function TodayPage({
   onAddMeal: () => void;
   onEditMeal: (meal: Meal) => void;
   onGo: (page: Page) => void;
+  healthSyncStatus: 'idle' | 'syncing' | 'done' | 'error';
+  onHealthSync: () => Promise<boolean>;
 }) {
   const caloriePercent = Math.min(
     100,
@@ -1359,13 +1471,30 @@ function TodayPage({
   const activePlan = state.workoutPlans
     .filter((plan) => !plan.days?.length || plan.days.includes(selectedDay))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'))[0];
-  const weeklyMaintenance = tdee(state.profile, state.activities);
-  const maintenance = tdeeForDay(state.profile, state.activities, selectedDay);
+  const scheduledActivities = state.activities
+    .filter((activity) => activity.days.includes(selectedDay))
+    .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'));
+  const checkInFor = (activityId: string, dateKey: string) =>
+    state.activityCheckIns.find((entry) => entry.activityId === activityId && entry.date === dateKey);
+  const effectiveActivitiesForDate = (dateKey: string) => {
+    const day = new Date(`${dateKey}T12:00:00`).getDay();
+    return state.activities.filter((activity) =>
+      activity.days.includes(day) && checkInFor(activity.id, dateKey)?.status !== 'skipped',
+    );
+  };
+  const selectedDateValue = new Date(`${date}T12:00:00`);
+  const weekStart = new Date(selectedDateValue);
+  weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+  const weeklyExercise = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(weekStart);
+    day.setDate(weekStart.getDate() + index);
+    return exerciseCaloriesForDay(state.profile, effectiveActivitiesForDate(localDateKey(day)), day.getDay());
+  }).reduce((sum, value) => sum + value, 0);
   const baseMaintenance = sedentaryTdee(state.profile);
-  const exerciseToday = Math.round(exerciseCaloriesForDay(state.profile, state.activities, selectedDay));
-  const deficit = state.goals.kind === 'lose_fat'
-    ? state.goals.calorieDeficit
-    : calorieDeficit(weeklyMaintenance, state.goals.calorieTarget);
+  const exerciseToday = Math.round(exerciseCaloriesForDay(state.profile, effectiveActivitiesForDate(date), selectedDay));
+  const weeklyMaintenance = Math.round(baseMaintenance + weeklyExercise / 7);
+  const maintenance = Math.round(baseMaintenance + exerciseToday);
+  const deficit = calorieDeficit(weeklyMaintenance, state.goals.calorieTarget);
   const weeklyFat = fatEquivalentKg(deficit);
   const health = state.healthSnapshots.find((entry) => entry.date === date);
   const recordedFast = state.fasts.find((entry) => localDateKey(new Date(entry.start)) === date);
@@ -1409,6 +1538,20 @@ function TodayPage({
   const fastStart = state.activeFastStart ? new Date(state.activeFastStart) : null;
   const fastTarget = fastStart ? new Date(fastStart.getTime() + fastingGoalSeconds * 1000) : null;
   const fastingGoalMet = Boolean(state.activeFastStart && fastSeconds >= fastingGoalSeconds);
+  const nativeHealth = typeof window !== 'undefined' && Capacitor.isNativePlatform();
+
+  function setActivityCheckIn(activityId: string, status: 'completed' | 'skipped') {
+    setState((current) => {
+      const existing = current.activityCheckIns.find((entry) => entry.activityId === activityId && entry.date === date);
+      const withoutCurrent = current.activityCheckIns.filter((entry) => !(entry.activityId === activityId && entry.date === date));
+      return {
+        ...current,
+        activityCheckIns: existing?.status === status
+          ? withoutCurrent
+          : [...withoutCurrent, { activityId, date, status }],
+      };
+    });
+  }
 
   useViewportLock(fastStartOpen);
 
@@ -1520,13 +1663,36 @@ function TodayPage({
           tone="blue"
         />
       </section>
-      {health && (
+      {(health || nativeHealth) && (
         <section className="health-strip">
-          <div><HeartPulse /><span><small>Health Connect</small><strong>{health.steps?.toLocaleString('pt-PT') ?? '—'} passos</strong></span></div>
-          <div><small>Calorias ativas</small><strong>{health.activeCalories === undefined ? '—' : `${Math.round(health.activeCalories)} kcal`}</strong></div>
-          <div><small>Frequência média</small><strong>{health.averageHeartRate === undefined ? '—' : `${Math.round(health.averageHeartRate)} bpm`}</strong></div>
-          <div><small>Sono</small><strong>{health.sleepMinutes === undefined ? '—' : `${Math.floor(health.sleepMinutes / 60)}h ${Math.round(health.sleepMinutes % 60)}m`}</strong></div>
+          <div><HeartPulse /><span><small>Health Connect</small><strong>{health?.steps?.toLocaleString('pt-PT') ?? '—'} passos</strong></span><button type="button" className="health-refresh" aria-label="Sincronizar Health Connect agora" disabled={!nativeHealth || healthSyncStatus === 'syncing'} onClick={() => void onHealthSync()}><RotateCcw className={healthSyncStatus === 'syncing' ? 'spin' : ''} /></button></div>
+          <div><small>Calorias ativas</small><strong>{health?.activeCalories === undefined ? '—' : `${Math.round(health.activeCalories)} kcal`}</strong></div>
+          <div><small>Frequência média</small><strong>{health?.averageHeartRate === undefined ? '—' : `${Math.round(health.averageHeartRate)} bpm`}</strong></div>
+          <div><small>Sono</small><strong>{health?.sleepMinutes === undefined ? '—' : `${Math.floor(health.sleepMinutes / 60)}h ${Math.round(health.sleepMinutes % 60)}m`}</strong></div>
         </section>
+      )}
+      {scheduledActivities.length > 0 && (
+        <Card className="panel attendance-panel">
+          <CardHeader>
+            <p className="eyebrow">PRESENÇA NOS TREINOS</p>
+            <CardTitle>Confirmar atividades deste dia</CardTitle>
+            <CardDescription>“Não fui” retira essa sessão do gasto estimado diário e da média desta semana.</CardDescription>
+          </CardHeader>
+          <CardContent className="attendance-list">
+            {scheduledActivities.map((activity) => {
+              const checkIn = checkInFor(activity.id, date);
+              return (
+                <div key={activity.id} className="attendance-row">
+                  <div><ActivityIcon /><span><strong>{activity.name}</strong><small>{activity.time ?? 'Hora por definir'} · {activity.minutes} min · MET {activity.met}</small></span></div>
+                  <div className="attendance-actions">
+                    <button type="button" className={checkIn?.status === 'completed' ? 'selected completed' : ''} onClick={() => setActivityCheckIn(activity.id, 'completed')}><Check /> Fui</button>
+                    <button type="button" className={checkIn?.status === 'skipped' ? 'selected skipped' : ''} onClick={() => setActivityCheckIn(activity.id, 'skipped')}><X /> Não fui</button>
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
       )}
       <Card className="panel meals-panel">
         <CardHeader className="panel-heading">
@@ -1558,7 +1724,7 @@ function TodayPage({
         <CardHeader className="panel-heading">
           <div>
             <p className="eyebrow">TREINO</p>
-            <CardTitle>{activePlan?.name ?? 'Plano por criar'}</CardTitle>
+            <CardTitle>{activePlan?.name ?? scheduledActivities[0]?.name ?? 'Plano por criar'}</CardTitle>
           </div>
           <div className="round-icon">
             <Dumbbell />
@@ -1588,6 +1754,17 @@ function TodayPage({
               </div>
               <Button className="wide-button" onClick={() => onGo('workout')}>
                 <Dumbbell /> Abrir treino
+              </Button>
+            </>
+          ) : scheduledActivities[0] ? (
+            <>
+              <div className="training-meta">
+                <span>{scheduledActivities[0].minutes} min</span>
+                <span>{scheduledActivities[0].time ?? 'Sem hora'}</span>
+                <span>MET {scheduledActivities[0].met}</span>
+              </div>
+              <Button className="wide-button" onClick={() => onGo('workout')}>
+                <Dumbbell /> Ver treinos do dia
               </Button>
             </>
           ) : (
@@ -2767,6 +2944,11 @@ function WorkoutPage({
   const duePlans = state.workoutPlans
     .filter((plan) => !plan.days?.length || plan.days.includes(selectedDay))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'));
+  const dueActivities = state.activities.filter((activity) => activity.days.includes(selectedDay));
+  const scheduleItems = [
+    ...duePlans.map((plan) => ({ type: 'plan' as const, id: plan.id, time: plan.time, plan })),
+    ...dueActivities.map((activity) => ({ type: 'activity' as const, id: activity.id, time: activity.time, activity })),
+  ].sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'));
 
   useEffect(() => {
     if (!startedAt) return;
@@ -2955,13 +3137,11 @@ function WorkoutPage({
       </section>
       <div className="workout-day-list">
           <TrainingTimer state={state} setState={setState} />
-          {duePlans.length ? (
-            duePlans.map((plan) => (
-              <PlanCard
-                key={plan.id}
-                plan={plan}
-                onStart={() => startWorkout(plan)}
-              />
+          {scheduleItems.length ? (
+            scheduleItems.map((item) => item.type === 'plan' ? (
+              <PlanCard key={`plan-${item.id}`} plan={item.plan} onStart={() => startWorkout(item.plan)} />
+            ) : (
+              <ActivityScheduleCard key={`activity-${item.id}`} activity={item.activity} onOpenJudo={normalizeText(item.activity.name).includes('judo') ? onGoJudo : undefined} />
             ))
           ) : (
             <Card className="panel plan-empty">
@@ -3003,6 +3183,33 @@ function WorkoutPage({
           )}
       </div>
     </div>
+  );
+}
+
+function ActivityScheduleCard({
+  activity,
+  onOpenJudo,
+}: {
+  activity: Activity;
+  onOpenJudo?: () => void;
+}) {
+  return (
+    <Card className="panel scheduled-activity-card">
+      <CardHeader className="panel-heading">
+        <div>
+          <p className="eyebrow">ATIVIDADE SEMANAL</p>
+          <CardTitle>{activity.name}</CardTitle>
+        </div>
+        <span className="time-badge">{activity.time ?? 'Sem hora'}</span>
+      </CardHeader>
+      <CardContent>
+        <div className="scheduled-activity-meta">
+          <span><TimerReset /> {activity.minutes} min</span>
+          <span><Flame /> MET {activity.met}</span>
+        </div>
+        {onOpenJudo && <Button size="lg" className="wide-button" onClick={onOpenJudo}><BookOpen /> Abrir área de judô</Button>}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -3319,12 +3526,20 @@ function JudoPage({
     return () => window.removeEventListener('fitide-back', close);
   }, [customVideo, selectedVideo]);
   const radarData = [
-    { subject: 'Técnica', value: state.judoProfile.scores.technique },
-    { subject: 'Físico', value: state.judoProfile.scores.physical },
+    { subject: 'Tachi-waza', value: state.judoProfile.scores.tachiWaza },
+    { subject: 'Ne-waza', value: state.judoProfile.scores.neWaza },
+    { subject: 'Físico', value: state.judoProfile.scores.physicalCondition },
     { subject: 'Mental', value: state.judoProfile.scores.mental },
-    { subject: 'Condição', value: state.judoProfile.scores.conditioning },
     { subject: 'Conhecimento', value: state.judoProfile.scores.knowledge },
     { subject: 'Competição', value: state.judoProfile.scores.matchPrep },
+  ];
+  const scoreFields: { key: keyof AppState['judoProfile']['scores']; label: string }[] = [
+    { key: 'tachiWaza', label: 'Tachi-waza' },
+    { key: 'neWaza', label: 'Ne-waza' },
+    { key: 'physicalCondition', label: 'Físico e condição' },
+    { key: 'mental', label: 'Mental' },
+    { key: 'knowledge', label: 'Conhecimento' },
+    { key: 'matchPrep', label: 'Competição' },
   ];
   const weakest = [...radarData].sort((a, b) => a.value - b.value)[0];
   const tachiCount = Object.entries(techniqueCounts).reduce((sum, [id, count]) => sum + (judoTechniques.find((item) => item.id === id)?.category.endsWith('waza') && !['Osaekomi-waza', 'Shime-waza', 'Kansetsu-waza'].includes(judoTechniques.find((item) => item.id === id)?.category ?? '') ? count : 0), 0);
@@ -3398,7 +3613,7 @@ function JudoPage({
             <ChartContainer className="judo-radar-chart" config={{ value: { label: 'Pontuação', color: '#1f9dcc' } }}>
               <RadarChart data={radarData} outerRadius="68%"><PolarGrid /><PolarAngleAxis dataKey="subject" tick={{ fontSize: 11 }} /><PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} /><Radar dataKey="value" stroke="#19a8e0" fill="#168fbd" fillOpacity={0.42} strokeWidth={3} /></RadarChart>
             </ChartContainer>
-            <div className="judo-score-editor">{Object.entries(state.judoProfile.scores).map(([key, value]) => <Field key={key} label={{ technique: 'Técnica', physical: 'Físico', mental: 'Mental', conditioning: 'Condição', knowledge: 'Conhecimento', matchPrep: 'Competição' }[key]}><NumberInput value={value} min={0} max={100} step="5" onChange={(score) => patchJudoProfile({ scores: { ...state.judoProfile.scores, [key]: score } })} /></Field>)}</div>
+            <div className="judo-score-editor">{scoreFields.map(({ key, label }) => <Field key={key} label={label}><NumberInput value={state.judoProfile.scores[key]} min={0} max={100} step="5" onChange={(score) => patchJudoProfile({ scores: { ...state.judoProfile.scores, [key]: score } })} /></Field>)}</div>
           </CardContent>
         </Card>
         <Card className="panel tokui-card">
@@ -3480,18 +3695,32 @@ function CalendarPage({
     const date = new Date(`${selectedDate}T12:00:00`);
     return new Date(date.getFullYear(), date.getMonth(), 1);
   });
-  const calendarSwipeStart = useRef<number | null>(null);
+  const [monthSlide, setMonthSlide] = useState<{ to: Date; direction: -1 | 1 } | null>(null);
+  const calendarSwipeStart = useRef<{ x: number; y: number } | null>(null);
+  const monthSlideTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (monthSlideTimer.current !== null) window.clearTimeout(monthSlideTimer.current);
+  }, []);
   function changeMonth(delta: number) {
-    setMonth((current) => new Date(current.getFullYear(), current.getMonth() + delta, 1));
+    if (monthSlide) return;
+    const direction = (delta < 0 ? -1 : 1) as -1 | 1;
+    const next = new Date(month.getFullYear(), month.getMonth() + direction, 1);
+    setMonthSlide({ to: next, direction });
+    monthSlideTimer.current = window.setTimeout(() => {
+      setMonth(next);
+      setMonthSlide(null);
+      monthSlideTimer.current = null;
+    }, 320);
   }
-  const start = new Date(month.getFullYear(), month.getMonth(), 1);
-  const first = new Date(start);
-  first.setDate(first.getDate() - first.getDay());
-  const days = Array.from({ length: 42 }, (_, index) => {
-    const date = new Date(first);
-    date.setDate(first.getDate() + index);
-    return date;
-  });
+  function daysForMonth(targetMonth: Date) {
+    const first = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), 1);
+    first.setDate(first.getDate() - first.getDay());
+    return Array.from({ length: 42 }, (_, index) => {
+      const date = new Date(first);
+      date.setDate(first.getDate() + index);
+      return date;
+    });
+  }
   const dayMeals = state.meals.filter((meal) => meal.date === selectedDate);
   const nutrients = roundNutrients(
     sumNutrients(dayMeals.flatMap((meal) => meal.ingredients)),
@@ -3518,6 +3747,33 @@ function CalendarPage({
     const durationHours = (new Date(entry.end).getTime() - new Date(entry.start).getTime()) / 3_600_000;
     return localDateKey(new Date(entry.start)) === key && durationHours >= state.goals.fastingHours;
   });
+  function renderMonthGrid(targetMonth: Date, interactive = true) {
+    return (
+      <div className="calendar-grid">
+        {dayNames.map((day, index) => <span className="calendar-week" key={`${day}-${index}`}>{day}</span>)}
+        {daysForMonth(targetMonth).map((day) => {
+          const key = localDateKey(day);
+          const fastStatus = key === todayKey
+            ? 'today'
+            : key < todayKey && firstRecordDate && key >= firstRecordDate
+              ? (fastingMetForDate(key) ? 'met' : 'missed')
+              : '';
+          return (
+            <button
+              type="button"
+              key={key}
+              tabIndex={interactive ? 0 : -1}
+              className={`${day.getMonth() !== targetMonth.getMonth() ? 'outside' : ''} ${selectedDate === key ? 'selected' : ''}`}
+              onClick={() => interactive && setSelectedDate(key)}
+            >
+              <span>{day.getDate()}</span>
+              {fastStatus && <i className={fastStatus} />}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div className="content-page page-enter">
       <section className="page-intro">
@@ -3532,27 +3788,30 @@ function CalendarPage({
       <div className="calendar-layout">
         <Card
           className="panel calendar-card calendar-interactive"
-          onTouchStart={(event) => { event.stopPropagation(); calendarSwipeStart.current = event.touches[0]?.clientX ?? null; }}
+          onTouchStart={(event) => { event.stopPropagation(); const touch = event.touches[0]; calendarSwipeStart.current = touch ? { x: touch.clientX, y: touch.clientY } : null; }}
           onTouchMove={(event) => event.stopPropagation()}
           onTouchEnd={(event) => {
             event.stopPropagation();
-            const startX = calendarSwipeStart.current;
+            const swipeStart = calendarSwipeStart.current;
             calendarSwipeStart.current = null;
-            if (startX === null) return;
-            const distance = (event.changedTouches[0]?.clientX ?? startX) - startX;
-            if (Math.abs(distance) >= 48) changeMonth(distance < 0 ? 1 : -1);
+            const touch = event.changedTouches[0];
+            if (!swipeStart || !touch) return;
+            const distanceX = touch.clientX - swipeStart.x;
+            const distanceY = touch.clientY - swipeStart.y;
+            if (Math.abs(distanceX) >= 48 && Math.abs(distanceX) > Math.abs(distanceY) * 1.2) changeMonth(distanceX < 0 ? 1 : -1);
           }}
         >
           <CardHeader className="calendar-head">
             <Button
               variant="ghost"
               size="icon"
+              disabled={Boolean(monthSlide)}
               onClick={() => changeMonth(-1)}
             >
               <ChevronLeft />
             </Button>
             <CardTitle>
-              {month.toLocaleDateString('pt-PT', {
+              {(monthSlide?.to ?? month).toLocaleDateString('pt-PT', {
                 month: 'long',
                 year: 'numeric',
               })}
@@ -3560,6 +3819,7 @@ function CalendarPage({
             <Button
               variant="ghost"
               size="icon"
+              disabled={Boolean(monthSlide)}
               onClick={() => changeMonth(1)}
             >
               <ChevronRight />
@@ -3567,30 +3827,9 @@ function CalendarPage({
           </CardHeader>
           <CardContent>
             <div className="calendar-legend"><span><i className="met" /> Meta de jejum</span><span><i className="today" /> Hoje</span><span><i className="missed" /> Meta não cumprida</span></div>
-            <div className="calendar-grid">
-              {dayNames.map((day, index) => (
-                <span className="calendar-week" key={`${day}-${index}`}>
-                  {day}
-                </span>
-              ))}
-              {days.map((day) => {
-                const key = localDateKey(day);
-                const fastStatus = key === todayKey
-                  ? 'today'
-                  : key < todayKey && firstRecordDate && key >= firstRecordDate
-                    ? (fastingMetForDate(key) ? 'met' : 'missed')
-                    : '';
-                return (
-                  <button
-                    key={key}
-                    className={`${day.getMonth() !== month.getMonth() ? 'outside' : ''} ${selectedDate === key ? 'selected' : ''}`}
-                    onClick={() => setSelectedDate(key)}
-                  >
-                    <span>{day.getDate()}</span>
-                    {fastStatus && <i className={fastStatus} />}
-                  </button>
-                );
-              })}
+            <div className={`calendar-month-viewport ${monthSlide ? `sliding ${monthSlide.direction > 0 ? 'next' : 'previous'}` : ''}`}>
+              <div className="calendar-month-current">{renderMonthGrid(month)}</div>
+              {monthSlide && <div className="calendar-month-incoming" aria-hidden="true">{renderMonthGrid(monthSlide.to, false)}</div>}
             </div>
           </CardContent>
         </Card>
@@ -4010,92 +4249,41 @@ function pickHealthValues(payload: string | undefined): number[] {
   }
 }
 
+async function queryHealthMetric(variable: string, operation: 'SUM' | 'AVERAGE', start: Date, end: Date) {
+  const isoDate = (value: Date) => `${value.toISOString().split('.')[0]}Z`;
+  const result = await HealthFitness.getData({
+    parameters: JSON.stringify({
+      Variable: variable,
+      StartDate: isoDate(start),
+      EndDate: isoDate(end),
+      TimeUnit: 'DAY',
+      OperationType: operation,
+      TimeUnitLength: 1,
+      AdvancedQueryReturnType: 'ALL_DATA',
+      AdvancedQueryResultType: 'RAW_DATA',
+    }),
+  });
+  const dataPoints = pickHealthValues(result.resultDataPoints);
+  const values = dataPoints.length ? dataPoints : pickHealthValues(result.results);
+  if (!values.length) return undefined;
+  return operation === 'SUM'
+    ? values.reduce((sum, value) => sum + value, 0)
+    : values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
 function HealthConnectPanel({
   state,
-  setState,
+  status,
+  message,
+  onSync,
 }: {
   state: AppState;
-  setState: React.Dispatch<React.SetStateAction<AppState>>;
+  status: 'idle' | 'syncing' | 'done' | 'error';
+  message: string;
+  onSync: () => Promise<boolean>;
 }) {
   const native = typeof window !== 'undefined' && Capacitor.isNativePlatform();
-  const [status, setStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
-  const [message, setMessage] = useState('');
   const latest = state.healthSnapshots.slice().sort((a, b) => b.date.localeCompare(a.date))[0];
-
-  async function queryMetric(variable: string, operation: 'SUM' | 'AVERAGE', start: Date, end: Date) {
-    const isoDate = (value: Date) => `${value.toISOString().split('.')[0]}Z`;
-    const result = await HealthFitness.getData({
-      parameters: JSON.stringify({
-        Variable: variable,
-        StartDate: isoDate(start),
-        EndDate: isoDate(end),
-        TimeUnit: 'DAY',
-        OperationType: operation,
-        TimeUnitLength: 1,
-        AdvancedQueryReturnType: 'ALL_DATA',
-        AdvancedQueryResultType: 'RAW_DATA',
-      }),
-    });
-    const values = pickHealthValues(result.resultDataPoints).length
-      ? pickHealthValues(result.resultDataPoints)
-      : pickHealthValues(result.results);
-    if (!values.length) return undefined;
-    return operation === 'SUM'
-      ? values.reduce((sum, value) => sum + value, 0)
-      : values.reduce((sum, value) => sum + value, 0) / values.length;
-  }
-
-  async function connectAndSync() {
-    setStatus('syncing');
-    setMessage('A pedir autorização no Health Connect…');
-    try {
-      const inactive = JSON.stringify({ IsActive: false, AccessType: 'READ' });
-      await HealthFitness.requestHealthPermissions({
-        customPermissions: JSON.stringify([
-          { Variable: 'STEPS', AccessType: 'READ' },
-          { Variable: 'CALORIES_BURNED', AccessType: 'READ' },
-          { Variable: 'HEART_RATE', AccessType: 'READ' },
-          { Variable: 'SLEEP', AccessType: 'READ' },
-          { Variable: 'BODY_FAT_PERCENTAGE', AccessType: 'READ' },
-        ]),
-        allVariables: inactive,
-        fitnessVariables: inactive,
-        healthVariables: inactive,
-        profileVariables: inactive,
-        workoutVariables: inactive,
-      });
-      setMessage('A importar os dados de hoje…');
-      const date = localDateKey();
-      const start = new Date(`${date}T00:00:00`);
-      const end = new Date(start);
-      end.setDate(end.getDate() + 1);
-      const [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent] = await Promise.all([
-        queryMetric('STEPS', 'SUM', start, end),
-        queryMetric('CALORIES_BURNED', 'SUM', start, end),
-        queryMetric('HEART_RATE', 'AVERAGE', start, end),
-        queryMetric('SLEEP', 'SUM', start, end),
-        queryMetric('BODY_FAT_PERCENTAGE', 'AVERAGE', start, end),
-      ]);
-      const snapshot: HealthSnapshot = {
-        date,
-        steps: steps === undefined ? undefined : Math.round(steps),
-        activeCalories,
-        averageHeartRate,
-        sleepMinutes,
-        bodyFatPercent,
-        syncedAt: new Date().toISOString(),
-      };
-      setState((current) => ({
-        ...current,
-        healthSnapshots: [...current.healthSnapshots.filter((item) => item.date !== date), snapshot],
-      }));
-      setStatus('done');
-      setMessage('Dados de hoje sincronizados.');
-    } catch (error) {
-      setStatus('error');
-      setMessage(error instanceof Error ? error.message : 'Não foi possível ligar ao Health Connect.');
-    }
-  }
 
   return (
     <div className="health-connect-panel">
@@ -4103,12 +4291,12 @@ function HealthConnectPanel({
         <div className="round-icon health"><HeartPulse /></div>
         <div>
           <strong>Health Connect</strong>
-          <p>Importa do relógio passos, calorias ativas, ritmo cardíaco, sono e gordura corporal. Os dados só são lidos depois da tua autorização no Android.</p>
+          <p>Importa do relógio passos, calorias ativas, ritmo cardíaco, sono e gordura corporal. Depois de ligado, sincroniza automaticamente a cada 15 minutos e ao voltar à app.</p>
           {latest && <small>Última sincronização: {new Date(latest.syncedAt).toLocaleString('pt-PT')} · {latest.steps?.toLocaleString('pt-PT') ?? '—'} passos</small>}
           {message && <small className={status === 'error' ? 'health-error' : ''}>{message}</small>}
           <div className="health-actions">
-            <Button type="button" onClick={connectAndSync} disabled={!native || status === 'syncing'}>{status === 'syncing' ? <LoaderCircle className="spin" /> : <HeartPulse />}{native ? 'Ligar e sincronizar' : 'Disponível no APK'}</Button>
-            {native && <Button type="button" variant="outline" onClick={() => HealthFitness.openHealthConnect().catch(() => setMessage('Health Connect não está disponível neste dispositivo.'))}>Abrir Health Connect</Button>}
+            <Button type="button" onClick={() => void onSync()} disabled={!native || status === 'syncing'}>{status === 'syncing' ? <LoaderCircle className="spin" /> : <HeartPulse />}{native ? (state.healthSyncEnabled ? 'Sincronizar agora' : 'Ligar e sincronizar') : 'Disponível no APK'}</Button>
+            {native && <Button type="button" variant="outline" onClick={() => void HealthFitness.openHealthConnect().catch(() => undefined)}>Abrir Health Connect</Button>}
           </div>
         </div>
       </div>
@@ -4121,10 +4309,16 @@ function SettingsPage({
   state,
   setState,
   onReset,
+  healthSyncStatus,
+  healthSyncMessage,
+  onHealthSync,
 }: {
   state: AppState;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
   onReset: () => Promise<void>;
+  healthSyncStatus: 'idle' | 'syncing' | 'done' | 'error';
+  healthSyncMessage: string;
+  onHealthSync: () => Promise<boolean>;
 }) {
   const [profile, setProfile] = useState(state.profile);
   const [goals, setGoals] = useState(state.goals);
@@ -4133,6 +4327,7 @@ function SettingsPage({
   const [minutes, setMinutes] = useState(60);
   const [met, setMet] = useState(5);
   const [days, setDays] = useState<number[]>([1, 3, 5]);
+  const [activityTime, setActivityTime] = useState('18:00');
   const [split, setSplit] = useState('full_body');
   const [bodyFocus, setBodyFocus] = useState<string[]>([]);
   const [level, setLevel] = useState('intermediate');
@@ -4163,11 +4358,16 @@ function SettingsPage({
       days,
       minutes,
       met,
+      time: activityTime,
     };
     const nextActivities = [...state.activities, activity];
     const nextGoals = alignCalorieGoal(goals, profile, nextActivities);
     setGoals(nextGoals);
     setState((current) => ({ ...current, activities: nextActivities, goals: nextGoals }));
+    if (activityPreset === 'Musculação') {
+      setWorkoutDays([...days]);
+      setWorkoutTime(activityTime);
+    }
   }
   function removeActivity(id: string) {
     const nextActivities = state.activities.filter((activity) => activity.id !== id);
@@ -4491,7 +4691,7 @@ function SettingsPage({
                     <strong>{activity.name}</strong>
                     <small>
                       {activity.days.map((day) => fullDayNames[day]).join(', ')}{' '}
-                      · {activity.minutes} min
+                      · {activity.time ?? 'Sem hora'} · {activity.minutes} min
                     </small>
                   </div>
                   <span>MET {activity.met}</span>
@@ -4508,7 +4708,7 @@ function SettingsPage({
               ))}
             </div>
             <div className="activity-builder">
-              <div className="form-grid three">
+              <div className="form-grid four">
                 <Field label="Atividade">
                   <select
                     value={activityPreset}
@@ -4524,6 +4724,9 @@ function SettingsPage({
                 </Field>
                 <Field label="Minutos">
                   <NumberInput value={minutes} min={5} max={240} step="5" onChange={setMinutes} />
+                </Field>
+                <Field label="Hora">
+                  <Input type="time" value={activityTime} onChange={(event) => setActivityTime(event.target.value)} />
                 </Field>
                 <Field label={<span className="label-help">Intensidade MET <span className="help-tip" tabIndex={0}><CircleHelp /><span role="tooltip">Escala MET: 1 = repouso sentado; 2–2,9 = leve; 3–5,9 = moderado; 6–9,9 = vigoroso; 10+ = muito vigoroso. Uma atividade de 10 MET usa aproximadamente 10× a energia do repouso durante o tempo ativo.</span></span></span>}>
                   <NumberInput value={met} min={1} max={18} step="0.5" onChange={setMet} />
@@ -4558,8 +4761,9 @@ function SettingsPage({
                 <Plus /> Adicionar atividade
               </Button>
             </div>
-            <div className="routine-divider" />
-            <section className="workout-settings-builder">
+            {activityPreset === 'Musculação' && <>
+              <div className="routine-divider" />
+              <section className="workout-settings-builder">
               <div>
                 <p className="eyebrow">MUSCULAÇÃO</p>
                 <h3>Sugerir nova rotina</h3>
@@ -4602,7 +4806,8 @@ function SettingsPage({
                   </div>
                 ))}
               </div>
-            </section>
+              </section>
+            </>}
           </CardContent>
         </Card>
         <Card className="panel integration-card">
@@ -4610,7 +4815,7 @@ function SettingsPage({
             <CardTitle>Integrações e referências</CardTitle>
           </CardHeader>
           <CardContent>
-            <HealthConnectPanel state={state} setState={setState} />
+            <HealthConnectPanel state={state} status={healthSyncStatus} message={healthSyncMessage} onSync={onHealthSync} />
             <div className="integration-row">
               <div className="round-icon">
                 <Dumbbell />

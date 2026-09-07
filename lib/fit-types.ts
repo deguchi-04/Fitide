@@ -32,6 +32,13 @@ export interface Activity {
   days: number[];
   minutes: number;
   met: number;
+  time?: string;
+}
+
+export interface ActivityCheckIn {
+  activityId: string;
+  date: string;
+  status: 'completed' | 'skipped';
 }
 
 export interface Nutrients {
@@ -148,10 +155,10 @@ export interface JudoProfile {
   tokuiWazaIds: string[];
   learningGoals: JudoLearningGoal[];
   scores: {
-    technique: number;
-    physical: number;
+    tachiWaza: number;
+    neWaza: number;
+    physicalCondition: number;
     mental: number;
-    conditioning: number;
     knowledge: number;
     matchPrep: number;
   };
@@ -172,6 +179,7 @@ export interface AppState {
   profile: Profile;
   goals: Goals;
   activities: Activity[];
+  activityCheckIns: ActivityCheckIn[];
   meals: Meal[];
   customFoods: SavedFood[];
   weights: WeightEntry[];
@@ -184,4 +192,5 @@ export interface AppState {
   judoPractices: JudoPractice[];
   judoProfile: JudoProfile;
   healthSnapshots: HealthSnapshot[];
+  healthSyncEnabled: boolean;
 }
