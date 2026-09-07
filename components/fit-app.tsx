@@ -4760,6 +4760,7 @@ function NumberInput({
   const effectiveMax = activeUnitOption?.max ?? max;
   const increment = Number(effectiveStep);
   const precision = effectiveStep.includes('.') ? effectiveStep.split('.')[1].length : 0;
+  const [customWheelValue, setCustomWheelValue] = useState<number | null>(null);
   const options = useMemo(() => {
     const values: number[] = [];
     const count = Math.floor((effectiveMax - effectiveMin) / increment);
@@ -4767,14 +4768,18 @@ function NumberInput({
       values.push(Number((effectiveMin + index * increment).toFixed(precision)));
     }
     if (value !== '' && value >= effectiveMin && value <= effectiveMax && !values.includes(value)) values.push(value);
+    if (customWheelValue !== null && customWheelValue >= effectiveMin && customWheelValue <= effectiveMax && !values.includes(customWheelValue)) {
+      values.push(customWheelValue);
+    }
     return values.sort((a, b) => a - b);
-  }, [effectiveMax, effectiveMin, increment, precision, value]);
+  }, [customWheelValue, effectiveMax, effectiveMin, increment, precision, value]);
   const initialValue = value === '' || value < effectiveMin || value > effectiveMax
     ? activeUnitOption?.defaultValue ?? options[0]
     : value;
   const [draft, setDraft] = useState(initialValue);
   const [manualDraft, setManualDraft] = useState(String(initialValue));
   const wheelRef = useRef<HTMLDivElement>(null);
+  const manualInputFocused = useRef(false);
   const itemHeight = 56;
   useViewportLock(open);
   useEffect(() => {
@@ -4807,9 +4812,10 @@ function NumberInput({
       if (wheelRef.current) wheelRef.current.scrollTop = index * itemHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [draftUnit, open, options]);
+  }, [draft, draftUnit, open, options]);
 
   function selectAtScroll() {
+    if (manualInputFocused.current) return;
     const index = Math.min(
       options.length - 1,
       Math.max(0, Math.round((wheelRef.current?.scrollTop ?? 0) / itemHeight)),
@@ -4823,6 +4829,13 @@ function NumberInput({
     const parsed = Number(manualDraft.trim().replace(',', '.'));
     if (!Number.isFinite(parsed)) return draft;
     return Number(Math.min(effectiveMax, Math.max(effectiveMin, parsed)).toFixed(precision));
+  }
+
+  function applyManualDraftToWheel() {
+    const parsed = parsedManualValue();
+    setCustomWheelValue(parsed);
+    setDraft(parsed);
+    setManualDraft(formatOption(parsed));
   }
 
   function commitDraftAndClose() {
@@ -4845,6 +4858,7 @@ function NumberInput({
           const openingPrecision = openingStep.includes('.') ? openingStep.split('.')[1].length : 0;
           const openingValue = value === '' ? openingOption?.defaultValue ?? min : value;
           setDraftUnit(openingUnit);
+          setCustomWheelValue(null);
           setDraft(openingValue);
           setManualDraft(formatNumber(openingValue, openingPrecision));
           setOpen(true);
@@ -4879,6 +4893,7 @@ function NumberInput({
                     onClick={() => {
                       const nextPrecision = option.step.includes('.') ? option.step.split('.')[1].length : 0;
                       setDraftUnit(option.value);
+                      setCustomWheelValue(null);
                       setDraft(option.defaultValue);
                       setManualDraft(formatNumber(option.defaultValue, nextPrecision));
                     }}
@@ -4916,11 +4931,11 @@ function NumberInput({
                 inputMode="decimal"
                 autoComplete="off"
                 aria-label={`${ariaLabel ?? 'Valor'} introduzido manualmente`}
+                onFocus={() => { manualInputFocused.current = true; }}
                 onChange={(event) => setManualDraft(event.target.value.replace(/[^0-9,.-]/g, ''))}
                 onBlur={() => {
-                  const parsed = parsedManualValue();
-                  setDraft(parsed);
-                  setManualDraft(formatOption(parsed));
+                  manualInputFocused.current = false;
+                  applyManualDraftToWheel();
                 }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') commitDraftAndClose();
