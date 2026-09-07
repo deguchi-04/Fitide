@@ -439,6 +439,9 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 :root[data-theme='dark'] .technique-filters button,
 :root[data-theme='dark'] .technique-grid article > a,
 :root[data-theme='dark'] select { background: var(--card); color: var(--foreground); }
+:root[data-theme='dark'] .water-habit .habit-copy strong { color: #f4fbfe; }
+:root[data-theme='dark'] .water-habit .habit-label { color: #78d5f4; }
+:root[data-theme='dark'] .water-habit .habit-copy > small:last-child { color: #b4c8d0; }
 :root[data-theme='dark'] .ingredient-input,
 :root[data-theme='dark'] .saved-foods,
 :root[data-theme='dark'] .activity-builder,
