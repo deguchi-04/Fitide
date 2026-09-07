@@ -12,7 +12,7 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "db:generate": "drizzle-kit generate",
-    "android:sync": "cap sync android",
+    "android:sync": "node scripts/patch-capacitor-camera.mjs && cap sync android",
     "android:apk": "cd android && gradlew.bat assembleDebug"
   },
   "dependencies": {

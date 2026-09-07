@@ -117,6 +117,14 @@ interface WorkoutTimerNativePlugin {
   stop(): Promise<void>;
 }
 
+interface NativeLabelPhotoResult {
+  webPath?: string;
+  thumbnail?: string;
+  metadata?: {
+    format?: string;
+  };
+}
+
 const NativeWorkoutTimer = registerPlugin<WorkoutTimerNativePlugin>('WorkoutTimer');
 
 type Page =
@@ -488,7 +496,7 @@ async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
   const sourceY = Math.max(0, Math.round(crop.y * scaleY));
   const sourceWidth = Math.min(image.naturalWidth - sourceX, Math.max(1, Math.round(crop.width * scaleX)));
   const sourceHeight = Math.min(image.naturalHeight - sourceY, Math.max(1, Math.round(crop.height * scaleY)));
-  const outputScale = Math.min(2, 1000 / sourceWidth, 1400 / sourceHeight);
+  const outputScale = Math.min(1.25, 900 / sourceWidth, 1200 / sourceHeight);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sourceWidth * outputScale));
   canvas.height = Math.max(1, Math.round(sourceHeight * outputScale));
@@ -585,7 +593,7 @@ async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
   }
   context.putImageData(imageData, 0, 0);
   const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('crop-failed'))), 'image/jpeg', 0.94);
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('crop-failed'))), 'image/jpeg', 0.9);
   });
   canvas.width = 1;
   canvas.height = 1;
@@ -596,7 +604,7 @@ async function prepareNutritionPreview(file: File) {
   if (typeof createImageBitmap !== 'function') return file;
   const bitmap = await createImageBitmap(file, {
     imageOrientation: 'from-image',
-    resizeWidth: 1280,
+    resizeWidth: 960,
     resizeQuality: 'high',
   });
   try {
@@ -609,7 +617,7 @@ async function prepareNutritionPreview(file: File) {
     context.imageSmoothingQuality = 'high';
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('preview-failed'))), 'image/jpeg', 0.82);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('preview-failed'))), 'image/jpeg', 0.76);
     });
     canvas.width = 1;
     canvas.height = 1;
@@ -617,6 +625,29 @@ async function prepareNutritionPreview(file: File) {
   } finally {
     bitmap.close();
   }
+}
+
+function nativeLabelPhotoBlob(photo: NativeLabelPhotoResult) {
+  if (!photo.thumbnail) return undefined;
+  const encoded = photo.thumbnail.includes(',')
+    ? photo.thumbnail.slice(photo.thumbnail.indexOf(',') + 1)
+    : photo.thumbnail;
+  const binary = window.atob(encoded.replace(/\s/g, ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: 'image/jpeg' });
+}
+
+async function nativeLabelPhotoFile(photo: NativeLabelPhotoResult) {
+  const thumbnail = nativeLabelPhotoBlob(photo);
+  if (thumbnail) return new File([thumbnail], 'rotulo.jpg', { type: 'image/jpeg' });
+  if (!photo.webPath) throw new Error('photo-unavailable');
+  const response = await fetch(photo.webPath);
+  if (!response.ok) throw new Error('photo-unavailable');
+  const blob = await response.blob();
+  const format = photo.metadata?.format?.toLowerCase() ?? 'jpeg';
+  const extension = format === 'png' ? 'png' : 'jpg';
+  return new File([blob], `rotulo.${extension}`, { type: blob.type || `image/${format}` });
 }
 
 function youtubeIdFromUrl(url: string) {
@@ -674,6 +705,7 @@ export default function FitApp() {
   );
   const [mealOpen, setMealOpen] = useState(false);
   const [editingMeal, setEditingMeal] = useState<Meal | null>(null);
+  const [restoredLabelPhoto, setRestoredLabelPhoto] = useState<NativeLabelPhotoResult | null>(null);
   const [now, setNow] = useState(Date.now());
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const swipeAxis = useRef<'x' | 'y' | null>(null);
@@ -721,6 +753,19 @@ export default function FitApp() {
     }).then((handle) => { removeListener = () => handle.remove(); });
     return () => { void removeListener?.(); };
   }, [mealOpen, page]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let removeListener: (() => Promise<void>) | undefined;
+    void CapacitorApp.addListener('appRestoredResult', (event) => {
+      if (event.pluginId !== 'Camera' || !['takePhoto', 'getPhoto'].includes(event.methodName)) return;
+      if (!event.success || !event.data) return;
+      setEditingMeal(null);
+      setRestoredLabelPhoto(event.data as NativeLabelPhotoResult);
+      setMealOpen(true);
+    }).then((handle) => { removeListener = () => handle.remove(); });
+    return () => { void removeListener?.(); };
+  }, []);
 
   useEffect(() => {
     if (!loaded) return;
@@ -1069,6 +1114,8 @@ export default function FitApp() {
           date={selectedDate}
           meal={editingMeal ?? undefined}
           customFoods={state.customFoods}
+          restoredLabelPhoto={restoredLabelPhoto}
+          onRestoredLabelPhotoConsumed={() => setRestoredLabelPhoto(null)}
           onCustomFoodsChange={(customFoods) => patchState({ customFoods })}
           onClose={() => { setMealOpen(false); setEditingMeal(null); }}
           onSave={(meal) => {
@@ -1795,6 +1842,8 @@ function MealDialog({
   date,
   meal,
   customFoods,
+  restoredLabelPhoto,
+  onRestoredLabelPhotoConsumed,
   onCustomFoodsChange,
   onClose,
   onSave,
@@ -1802,6 +1851,8 @@ function MealDialog({
   date: string;
   meal?: Meal;
   customFoods: SavedFood[];
+  restoredLabelPhoto?: NativeLabelPhotoResult | null;
+  onRestoredLabelPhotoConsumed: () => void;
   onCustomFoodsChange: (foods: SavedFood[]) => void;
   onClose: () => void;
   onSave: (meal: Meal) => void;
@@ -1825,6 +1876,7 @@ function MealDialog({
   const labelCropImage = useRef<HTMLImageElement>(null);
   const labelWorker = useRef<{ terminate: () => Promise<unknown> } | null>(null);
   const labelScanRun = useRef(0);
+  const restoredLabelPhotoHandled = useRef(false);
   const [labelPhotoUrl, setLabelPhotoUrl] = useState('');
   const [labelCrop, setLabelCrop] = useState<PercentCrop>({ unit: '%', x: 7, y: 18, width: 86, height: 62 });
   const [completedLabelCrop, setCompletedLabelCrop] = useState<PixelCrop>();
@@ -2050,27 +2102,36 @@ function MealDialog({
     }
   }
 
+  useEffect(() => {
+    if (!restoredLabelPhoto || restoredLabelPhotoHandled.current) return;
+    restoredLabelPhotoHandled.current = true;
+    setMode('Rótulo');
+    setLabelScanStatus('reading');
+    setLabelScanMessage('A recuperar a fotografia da câmara…');
+    void nativeLabelPhotoFile(restoredLabelPhoto)
+      .then((file) => openLabelCrop(file))
+      .catch(() => {
+        setLabelScanStatus('error');
+        setLabelScanMessage('O Android recuperou a app, mas não conseguiu devolver a fotografia. Tenta novamente.');
+      })
+      .finally(onRestoredLabelPhotoConsumed);
+  }, [restoredLabelPhoto]);
+
   async function takeNativeLabelPhoto() {
     setLabelScanStatus('reading');
     setLabelScanProgress(0);
     setLabelScanMessage('A abrir a câmara…');
     try {
       const photo = await CapacitorCamera.takePhoto({
-        quality: 82,
-        targetWidth: 1280,
-        targetHeight: 1280,
+        quality: 72,
+        targetWidth: 960,
+        targetHeight: 960,
         correctOrientation: true,
         saveToGallery: false,
         editable: 'no',
-        includeMetadata: true,
+        includeMetadata: false,
       });
-      if (!photo.webPath) throw new Error('photo-unavailable');
-      const response = await fetch(photo.webPath);
-      if (!response.ok) throw new Error('photo-unavailable');
-      const blob = await response.blob();
-      const format = photo.metadata?.format ?? 'jpeg';
-      const extension = format === 'png' ? 'png' : 'jpg';
-      await openLabelCrop(new File([blob], `rotulo.${extension}`, { type: blob.type || `image/${format}` }));
+      await openLabelCrop(await nativeLabelPhotoFile(photo));
     } catch (error) {
       if (error instanceof Error && /cancel/i.test(error.message)) {
         setLabelScanStatus('idle');
