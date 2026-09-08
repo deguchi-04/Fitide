@@ -1,7 +1,7 @@
 'use client';
 
 import { useId, useMemo, useState } from 'react';
-import { ArrowLeft, CirclePlay, LoaderCircle, Plus, X } from 'lucide-react';
+import { ArrowLeft, Check, CirclePlay, LoaderCircle, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { workoutGroups, exerciseGroups } from '@/lib/workout-groups';
@@ -16,8 +16,8 @@ export function ExerciseCatalog({ exercises, loading, replacing, onSelect, onClo
   onSelect: (id: string) => void;
   onClose: () => void;
 }) {
-  const [group, setGroup] = useState('all');
-  const [equipment, setEquipment] = useState('all');
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
+  const [selectedEquipment, setSelectedEquipment] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(36);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -27,13 +27,13 @@ export function ExerciseCatalog({ exercises, loading, replacing, onSelect, onClo
   const groups = useMemo(() => {
     const query = normalize(search).trim();
     const filtered = exercises.filter((item) =>
-      (group === 'all' || exerciseGroups(item).includes(group)) &&
-      (equipment === 'all' || item.equipment === equipment) &&
+      (!selectedGroups.length || exerciseGroups(item).some((group) => selectedGroups.includes(group))) &&
+      (!selectedEquipment.length || selectedEquipment.includes(item.equipment)) &&
       (!query || normalize(`${item.name} ${item.target} ${item.equipment}`).includes(query)));
     return workoutGroups.map((item) => ({ ...item, exercises: filtered.filter((exercise) =>
-      (group === 'all' ? exerciseGroups(exercise)[0] : group) === item.value),
+      (selectedGroups.length ? exerciseGroups(exercise).find((group) => selectedGroups.includes(group)) : exerciseGroups(exercise)[0]) === item.value),
     })).filter((item) => item.exercises.length);
-  }, [exercises, group, equipment, search]);
+  }, [exercises, selectedGroups, selectedEquipment, search]);
   const total = groups.reduce((sum, item) => sum + item.exercises.length, 0);
   function resetView() { setVisibleCount(36); setActiveId(null); }
 
@@ -41,16 +41,12 @@ export function ExerciseCatalog({ exercises, loading, replacing, onSelect, onClo
     <header className="exercise-catalog-heading">
       <Button type="button" variant="outline" onClick={onClose}><ArrowLeft /> Voltar ao treino</Button>
       <h3>{replacing ? 'Escolher substituição' : 'Catálogo de exercícios'}</h3>
-      <p>Abre a demonstração para veres o movimento antes de escolher.</p>
+      <p>Vê a imagem de cada exercício. Toca para ver o movimento.</p>
     </header>
     <div className="exercise-catalog-filters">
       <label htmlFor={searchId}>Pesquisar<Input id={searchId} value={search} placeholder="Ex.: remada, halteres…" onChange={(event) => { setSearch(event.target.value); resetView(); }} /></label>
-      <label>Grupo muscular<select value={group} onChange={(event) => { setGroup(event.target.value); resetView(); }}>
-        <option value="all">Todos os grupos</option>{workoutGroups.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-      </select></label>
-      <label>Equipamento<select value={equipment} onChange={(event) => { setEquipment(event.target.value); resetView(); }}>
-        <option value="all">Todos os equipamentos</option>{equipmentChoices.map((item) => <option key={item} value={item}>{item}</option>)}
-      </select></label>
+      <CatalogFilter label="Grupos musculares" options={workoutGroups} selected={selectedGroups} onChange={(values) => { setSelectedGroups(values); resetView(); }} />
+      <CatalogFilter label="Equipamentos" options={equipmentChoices.map((value) => ({ value, label: value }))} selected={selectedEquipment} onChange={(values) => { setSelectedEquipment(values); resetView(); }} />
     </div>
     {loading ? <p aria-live="polite"><LoaderCircle className="spin" /> A carregar exercícios…</p> : <>
       <p aria-live="polite">{total} exercícios · {Math.min(total, visibleCount)} apresentados</p>
@@ -67,7 +63,7 @@ export function ExerciseCatalog({ exercises, loading, replacing, onSelect, onClo
             {activeId === exercise.id ? <>
               <CatalogGif key={exercise.id} exercise={exercise} />
               <Button type="button" variant="ghost" onClick={() => setActiveId(null)}><X /> Fechar demonstração</Button>
-            </> : <button type="button" className="exercise-catalog-preview" onClick={() => setActiveId(exercise.id)} aria-expanded={false} aria-label={`Ver demonstração de ${exercise.name}`}><CirclePlay /><span>Ver demonstração</span></button>}
+            </> : <button type="button" className="exercise-catalog-preview" onClick={() => setActiveId(exercise.id)} aria-expanded={false} aria-label={`Ver demonstração de ${exercise.name}`}><CatalogThumbnail exercise={exercise} /><span className="exercise-catalog-play"><CirclePlay /> Ver movimento</span></button>}
             <Button type="button" variant="outline" onClick={() => { onSelect(exercise.id); setAdded((current) => ({ ...current, [exercise.id]: (current[exercise.id] ?? 0) + 1 })); }}><Plus /> {replacing ? 'Usar este exercício' : 'Adicionar ao treino'}</Button>
             {!!added[exercise.id] && <output className="exercise-catalog-added">Adicionado ao treino{added[exercise.id] > 1 ? ` (${added[exercise.id]}×)` : ''}</output>}
           </article>)}</div>
@@ -76,6 +72,29 @@ export function ExerciseCatalog({ exercises, loading, replacing, onSelect, onClo
       {visibleCount < total && <Button type="button" variant="outline" className="wide-button" onClick={() => setVisibleCount((count) => count + 36)}>Mostrar mais exercícios ({total - visibleCount})</Button>}
     </>}
   </section>;
+}
+
+function CatalogFilter({ label, options, selected, onChange }: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+}) {
+  return <fieldset className="catalog-multiselect">
+    <legend>{label}</legend>
+    <div className="muscle-picker">
+      <button type="button" aria-pressed={!selected.length} className={!selected.length ? 'selected' : ''} onClick={() => onChange([])}>Todos</button>
+      {options.map((item) => <button type="button" key={item.value} aria-pressed={selected.includes(item.value)} className={selected.includes(item.value) ? 'selected' : ''} onClick={() => onChange(selected.includes(item.value) ? selected.filter((value) => value !== item.value) : [...selected, item.value])}>{selected.includes(item.value) && <Check size={16} />}{item.label}</button>)}
+    </div>
+  </fieldset>;
+}
+
+function CatalogThumbnail({ exercise }: { exercise: WorkoutExercise }) {
+  const [failed, setFailed] = useState(false);
+  if (!exercise.gifUrl || failed) return <span className="catalog-thumbnail-unavailable">Imagem indisponível</span>;
+  const preview = `${exercise.gifUrl}${exercise.gifUrl.includes('?') ? '&' : '?'}preview=1`;
+  // eslint-disable-next-line @next/next/no-img-element -- the endpoint serves a single unanimated GIF frame.
+  return <img className="catalog-thumbnail" src={preview} alt={`Pré-visualização de ${exercise.name}`} width={360} height={260} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }
 
 function CatalogGif({ exercise }: { exercise: WorkoutExercise }) {

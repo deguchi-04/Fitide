@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import type { WorkoutExercise } from '@/lib/fit-types';
 import catalogSnapshot from '@/lib/data/workout-catalog.json';
 import { exerciseGroups } from '@/lib/workout-groups';
+import { readGifPreview } from '@/lib/gif-preview';
 
 type ApiExercise = {
   id?: string;
@@ -296,7 +297,8 @@ function catalogWorkout(focus: string[], level: string, equipment: string[] = []
 }
 
 export async function GET(request: Request) {
-  const id = new URL(request.url).searchParams.get('gif');
+  const params = new URL(request.url).searchParams;
+  const id = params.get('gif');
   const apiKey = env.WORKOUTX_API_KEY;
   if (!apiKey || !id || !/^[a-zA-Z0-9_-]{1,32}$/.test(id))
     return new Response('GIF não disponível', { status: 404 });
@@ -304,10 +306,22 @@ export async function GET(request: Request) {
     `https://api.workoutxapp.com/v1/gifs/${encodeURIComponent(id)}.gif`,
     {
       headers: { 'X-WorkoutX-Key': apiKey },
+      signal: AbortSignal.timeout(20000),
     },
   );
   if (!response.ok || !response.body)
     return new Response('GIF não disponível', { status: response.status });
+  if (params.get('preview') === '1') {
+    try {
+      const preview = await readGifPreview(response.body);
+      return new Response(preview as Uint8Array<ArrayBuffer>, { headers: {
+        'Content-Type': 'image/gif',
+        'Cache-Control': 'public, max-age=86400, s-maxage=604800',
+      } });
+    } catch {
+      return new Response('Pré-visualização indisponível', { status: 502 });
+    }
+  }
   return new Response(response.body, {
     headers: {
       'Content-Type': response.headers.get('Content-Type') ?? 'image/gif',

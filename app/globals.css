@@ -637,10 +637,13 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 .exercise-catalog-heading > button { justify-self: start; }
 .exercise-catalog h3, .exercise-catalog h4, .exercise-catalog h5, .exercise-catalog p { margin: 0; }
 .exercise-catalog p { font-size: 14px; color: var(--muted-foreground); }
-.exercise-catalog-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.exercise-catalog-filters { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .exercise-catalog-filters label { display: grid; gap: 6px; font-size: 14px; min-width: 0; }
 .exercise-catalog-filters label:first-child { grid-column: 1 / -1; }
-.exercise-catalog-filters select { width: 100%; min-width: 0; min-height: 44px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); }
+.catalog-multiselect { border: 0; margin: 0; padding: 0; min-width: 0; }
+.catalog-multiselect legend { font-size: 14px; font-weight: 650; margin-bottom: 8px; }
+.catalog-multiselect .muscle-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.catalog-multiselect .muscle-picker button { display: inline-flex; gap: 6px; align-items: center; justify-content: center; min-height: 44px; }
 .exercise-catalog-group { display: grid; gap: 12px; }
 .exercise-catalog-group h4 { font-size: 18px; }
 .exercise-catalog-group h4 span { color: var(--muted-foreground); font-size: 14px; font-weight: 400; margin-left: 8px; }
@@ -649,8 +652,11 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 .exercise-catalog-card.is-previewing { border-color: var(--blue); }
 .exercise-catalog-card h5 { font-size: 16px; line-height: 1.4; overflow-wrap: anywhere; }
 .exercise-catalog-card > button { min-height: 44px; white-space: normal; height: auto; }
-.exercise-catalog-preview { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; min-height: 110px !important; border-radius: 12px; background: color-mix(in srgb,var(--blue) 10%,var(--card)); color: var(--foreground); font-size: 14px; cursor: pointer; }
-.exercise-catalog-preview svg { width: 32px; height: 32px; color: var(--blue); }
+.exercise-catalog-preview { position: relative; display: grid; padding: 0; min-height: 180px !important; border-radius: 12px; overflow: hidden; background: var(--secondary); color: var(--foreground); font-size: 14px; cursor: pointer; }
+.catalog-thumbnail { width: 100%; height: 220px; object-fit: contain; background: white; }
+.catalog-thumbnail-unavailable { display: grid; place-items: center; min-height: 180px; padding: 20px; }
+.exercise-catalog-play { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; background: color-mix(in srgb,var(--blue) 10%,var(--card)); }
+.exercise-catalog-play svg { width: 20px; height: 20px; color: var(--blue); }
 .exercise-catalog-media { position: relative; display: grid; place-items: center; min-height: 180px; border-radius: 12px; overflow: hidden; background: var(--secondary); }
 .exercise-catalog-media img { display: block; width: 100%; max-height: 360px; object-fit: contain; background: white; }
 .exercise-catalog-media p { padding: 20px; text-align: center; }
