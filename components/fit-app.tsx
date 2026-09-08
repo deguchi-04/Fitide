@@ -6,7 +6,9 @@ import ReactCrop, { type PercentCrop, type PixelCrop } from 'react-image-crop';
 import {
   Activity as ActivityIcon,
   Apple,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   BookOpen,
   Camera,
   CalendarDays,
@@ -19,6 +21,7 @@ import {
   Dumbbell,
   ExternalLink,
   Flame,
+  GripVertical,
   HeartPulse,
   Home,
   CircleHelp,
@@ -178,24 +181,17 @@ const mobileNavItems = [
 const swipePageOrder = mobileNavItems.map((item) => item.id);
 const dayNames = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 const fullDayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-const splitLabels: Record<string, string> = {
-  full_body: 'Corpo inteiro',
-  upper: 'Parte superior',
-  lower: 'Parte inferior',
-  push: 'Empurrar',
-  pull: 'Puxar',
-  legs: 'Pernas',
-  core: 'Core',
-};
 const muscleOptions = [
-  { value: 'chest', label: 'Peito' },
+  { value: 'biceps', label: 'Bíceps' },
+  { value: 'triceps', label: 'Tríceps' },
   { value: 'back', label: 'Costas' },
-  { value: 'shoulders', label: 'Ombros' },
-  { value: 'upper arms', label: 'Braços' },
-  { value: 'lower arms', label: 'Antebraços' },
-  { value: 'upper legs', label: 'Pernas' },
-  { value: 'lower legs', label: 'Gémeos' },
-  { value: 'waist', label: 'Abdominais' },
+  { value: 'shoulders', label: 'Ombro' },
+  { value: 'upper legs', label: 'Perna' },
+  { value: 'abs', label: 'Abdominais' },
+  { value: 'traps', label: 'Trapézio' },
+  { value: 'forearms', label: 'Antebraço' },
+  { value: 'core', label: 'Core' },
+  { value: 'calves', label: 'Gémeos' },
 ];
 const workoutEquipmentOptions = [
   { value: 'free_weights', label: 'Pesos livres' },
@@ -837,6 +833,7 @@ function mergeState(saved: Partial<AppState>): AppState {
     },
     healthSnapshots: saved.healthSnapshots ?? [],
     healthSyncEnabled: saved.healthSyncEnabled ?? false,
+    widgetOrders: saved.widgetOrders ?? {},
   };
   merged.goals = alignCalorieGoal(merged.goals, merged.profile, merged.activities);
   return merged;
@@ -1112,6 +1109,7 @@ export default function FitApp() {
       intervalPresets: [...defaultState.intervalPresets], judoPractices: [],
       judoProfile: { ...defaultState.judoProfile, scores: { ...defaultState.judoProfile.scores }, tokuiWazaIds: [], learningGoals: [] },
       healthSnapshots: [], healthSyncEnabled: false,
+      widgetOrders: {},
     });
   }
 
@@ -1198,7 +1196,8 @@ export default function FitApp() {
   }
 
   function renderPage(targetPage: Page) {
-    if (targetPage === 'today') return (
+    let content: React.ReactNode;
+    if (targetPage === 'today') content = (
       <TodayPage
         state={state}
         setState={setState}
@@ -1218,7 +1217,7 @@ export default function FitApp() {
         onHealthSync={() => syncHealthConnect()}
       />
     );
-    if (targetPage === 'meals') return (
+    else if (targetPage === 'meals') content = (
       <MealsPage
         meals={dayMeals}
         consumed={consumed}
@@ -1228,9 +1227,9 @@ export default function FitApp() {
         onDelete={(id) => patchState({ meals: state.meals.filter((meal) => meal.id !== id) })}
       />
     );
-    if (targetPage === 'workout') return <WorkoutPage state={state} setState={setState} date={selectedDate} onGoJudo={() => setPage('judo')} />;
-    if (targetPage === 'judo') return <JudoPage state={state} setState={setState} date={selectedDate} onBack={() => setPage('workout')} />;
-    if (targetPage === 'calendar') return (
+    else if (targetPage === 'workout') content = <WorkoutPage state={state} setState={setState} date={selectedDate} onGoJudo={() => setPage('judo')} />;
+    else if (targetPage === 'judo') content = <JudoPage state={state} setState={setState} date={selectedDate} onBack={() => setPage('workout')} />;
+    else if (targetPage === 'calendar') content = (
       <CalendarPage
         state={state}
         selectedDate={selectedDate}
@@ -1239,8 +1238,21 @@ export default function FitApp() {
         onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
       />
     );
-    if (targetPage === 'progress') return <ProgressPage state={state} setState={setState} />;
-    return <SettingsPage state={state} setState={setState} onReset={resetProfile} healthSyncStatus={healthSyncStatus} healthSyncMessage={healthSyncMessage} onHealthSync={() => syncHealthConnect()} />;
+    else if (targetPage === 'progress') content = <ProgressPage state={state} setState={setState} />;
+    else content = <SettingsPage state={state} setState={setState} onReset={resetProfile} healthSyncStatus={healthSyncStatus} healthSyncMessage={healthSyncMessage} onHealthSync={() => syncHealthConnect()} />;
+    return (
+      <div className="page-composition" data-widget-page={targetPage}>
+        {content}
+        <WidgetReorderButton
+          page={targetPage}
+          order={state.widgetOrders[targetPage] ?? []}
+          onChange={(order) => setState((current) => ({
+            ...current,
+            widgetOrders: { ...current.widgetOrders, [targetPage]: order },
+          }))}
+        />
+      </div>
+    );
   }
 
   return (
@@ -3393,7 +3405,7 @@ function ActivityScheduleCard({
     <Card className="panel scheduled-activity-card">
       <CardHeader className="panel-heading">
         <div>
-          <p className="eyebrow">ATIVIDADE SEMANAL</p>
+          <p className="eyebrow">{activity.specificDate ? 'ATIVIDADE PONTUAL' : 'ATIVIDADE SEMANAL'}</p>
           <CardTitle>{activity.name}</CardTitle>
         </div>
         <span className="time-badge">{activity.time ?? 'Sem hora'}</span>
@@ -4484,10 +4496,10 @@ function SettingsPage({
   const [singleDate, setSingleDate] = useState(localDateKey());
   const [activityTime, setActivityTime] = useState('18:00');
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
-  const [split, setSplit] = useState('full_body');
-  const [bodyFocus, setBodyFocus] = useState<string[]>([]);
+  const [bodyFocus, setBodyFocus] = useState<string[]>(['biceps']);
   const [level, setLevel] = useState('intermediate');
   const [workoutEquipment, setWorkoutEquipment] = useState<string[]>(defaultWorkoutEquipment);
+  const [workoutCreationMode, setWorkoutCreationMode] = useState<'fitide' | 'custom' | null>(null);
   const [generating, setGenerating] = useState(false);
   const [editingPlan, setEditingPlan] = useState<WorkoutPlan | null>(null);
   const [creatingPlan, setCreatingPlan] = useState(false);
@@ -4520,6 +4532,10 @@ function SettingsPage({
     setScheduleMode('routine');
     setSingleDate(localDateKey());
     setActivityTime('18:00');
+    setWorkoutCreationMode(null);
+    setBodyFocus(['biceps']);
+    setLevel('intermediate');
+    setWorkoutEquipment(defaultWorkoutEquipment);
   }
   function saveActivity() {
     if (!activityName.trim() || (scheduleMode === 'routine' ? !days.length : !singleDate)) return;
@@ -4576,7 +4592,6 @@ function SettingsPage({
         body: JSON.stringify({
           goal: goals.kind === 'lose_fat' ? 'fat_loss' : goals.kind === 'gain_muscle' ? 'muscle_gain' : 'general_fitness',
           level,
-          split,
           bodyFocus,
           equipment: workoutEquipment,
         }),
@@ -4587,9 +4602,7 @@ function SettingsPage({
       const plan: WorkoutPlan = {
         id: uid(),
         activityId,
-        name: bodyFocus.length
-          ? `Mistura: ${bodyFocus.map((value) => muscleOptions.find((item) => item.value === value)?.label).filter(Boolean).join(', ')}`
-          : splitLabels[split],
+        name: bodyFocus.map((value) => muscleOptions.find((item) => item.value === value)?.label).filter(Boolean).join(', ') || 'Musculação',
         source: result.source,
         createdAt: new Date().toISOString(),
         days: scheduleMode === 'routine' ? [...days] : [],
@@ -4613,14 +4626,14 @@ function SettingsPage({
       setDays([]);
       setScheduleMode('routine');
       setSingleDate(localDateKey());
-      setBodyFocus([]);
-      setSplit('full_body');
+      setBodyFocus(['biceps']);
       setWorkoutEquipment(defaultWorkoutEquipment);
+      setWorkoutCreationMode(null);
     } finally {
       setGenerating(false);
     }
   }
-  async function loadWorkoutCatalog() {
+  async function loadWorkoutCatalog(catalogLevel = level) {
     const currentExercises = state.workoutPlans.flatMap((item) => item.exercises);
     setExerciseAlternatives(currentExercises.filter((exercise, index, items) => items.findIndex((item) => item.id === exercise.id) === index));
     setLoadingAlternatives(true);
@@ -4628,7 +4641,7 @@ function SettingsPage({
       const response = await fetch('/api/workout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'catalog', level }),
+        body: JSON.stringify({ action: 'catalog', level: catalogLevel }),
       });
       if (!response.ok) return;
       const result = (await response.json()) as { exercises?: WorkoutExercise[] };
@@ -4642,7 +4655,7 @@ function SettingsPage({
   async function openWorkoutEditor(plan: WorkoutPlan) {
     setCreatingPlan(false);
     setEditingPlan({ ...plan, days: [...(plan.days ?? [])], exercises: plan.exercises.map((exercise) => ({ ...exercise })) });
-    await loadWorkoutCatalog();
+    await loadWorkoutCatalog('intermediate');
   }
   async function createCustomWorkout() {
     if (scheduleMode === 'routine' ? !days.length : !singleDate) return;
@@ -4659,7 +4672,7 @@ function SettingsPage({
       time: activityTime,
       exercises: [],
     });
-    await loadWorkoutCatalog();
+    await loadWorkoutCatalog('intermediate');
   }
   function saveWorkoutPlan(plan: WorkoutPlan) {
     if (!plan.name.trim() || !plan.exercises.length) return;
@@ -4681,6 +4694,7 @@ function SettingsPage({
       setDays([]);
       setScheduleMode('routine');
       setSingleDate(localDateKey());
+      setWorkoutCreationMode(null);
     } else {
       setState((current) => ({ ...current, workoutPlans: current.workoutPlans.map((item) => item.id === plan.id ? { ...plan, name: plan.name.trim() } : item) }));
     }
@@ -4970,7 +4984,7 @@ function SettingsPage({
           </CardHeader>
           <CardContent>
             <div className="activity-list">
-              {state.activities.map((activity) => (
+              {state.activities.filter((activity) => !activity.specificDate).map((activity) => (
                 <div key={activity.id}>
                   <div className="round-icon soft">
                     <ActivityIcon />
@@ -5013,6 +5027,7 @@ function SettingsPage({
                       setActivityPreset(preset.name);
                       setActivityName(preset.name === 'Outro' ? '' : preset.name);
                       setIntensity(preset.intensity);
+                      setWorkoutCreationMode(null);
                     }}
                   >
                     {activityPresets.map((preset) => <option key={preset.name}>{preset.name}</option>)}
@@ -5083,13 +5098,21 @@ function SettingsPage({
               <section className="workout-settings-builder">
               <div>
                 <p className="eyebrow">MUSCULAÇÃO</p>
-                <h3>Sugerir nova rotina</h3>
-                <p>A rotina ficará agendada nos dias e hora escolhidos e aparecerá no ecrã Treino.</p>
+                <h3>Criar treino de musculação</h3>
+                <p>Escolhe primeiro se queres uma sugestão da Fitide ou construir o treino exercício a exercício.</p>
               </div>
-              <div className="form-grid two">
-                <Field label="Divisão">
-                  <select value={split} onChange={(event) => { setSplit(event.target.value); setBodyFocus([]); }}>
-                    {Object.entries(splitLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+              <fieldset className="workout-method-picker" aria-label="Método de criação do treino">
+                <button type="button" className={workoutCreationMode === 'fitide' ? 'selected' : ''} onClick={() => setWorkoutCreationMode('fitide')}>
+                  <Sparkles /><span><strong>Gerar com a Fitide</strong><small>Escolher grupo, nível e equipamento</small></span>
+                </button>
+                <button type="button" className={workoutCreationMode === 'custom' ? 'selected' : ''} onClick={() => setWorkoutCreationMode('custom')}>
+                  <Plus /><span><strong>Personalizado</strong><small>Escolher cada exercício, séries e carga</small></span>
+                </button>
+              </fieldset>
+              {workoutCreationMode === 'fitide' && <div className="workout-method-options">
+                <Field label="Grupo muscular">
+                  <select value={bodyFocus[0] ?? 'biceps'} onChange={(event) => setBodyFocus([event.target.value])}>
+                    {muscleOptions.map((muscle) => <option value={muscle.value} key={muscle.value}>{muscle.label}</option>)}
                   </select>
                 </Field>
                 <Field label="Nível">
@@ -5097,30 +5120,27 @@ function SettingsPage({
                     <option value="beginner">Iniciante</option><option value="intermediate">Intermédio</option><option value="advanced">Avançado</option>
                   </select>
                 </Field>
-              </div>
-              <Field label="Misturar grupos (opcional)">
-                <div className="muscle-picker">
-                  {muscleOptions.map((muscle) => <button type="button" key={muscle.value} className={bodyFocus.includes(muscle.value) ? 'selected' : ''} onClick={() => setBodyFocus((current) => current.includes(muscle.value) ? current.filter((value) => value !== muscle.value) : [...current, muscle.value])}>{muscle.label}</button>)}
-                </div>
-              </Field>
-              <Field label="Equipamento disponível">
-                <div className="muscle-picker equipment-picker">
-                  {workoutEquipmentOptions.map((equipment) => <button type="button" key={equipment.value} className={workoutEquipment.includes(equipment.value) ? 'selected' : ''} onClick={() => setWorkoutEquipment((current) => current.includes(equipment.value) ? current.filter((value) => value !== equipment.value) : [...current, equipment.value])}>{equipment.label}</button>)}
-                </div>
-              </Field>
-              <div className="workout-creation-actions">
-                <Button type="button" onClick={generateWorkout} disabled={generating || !workoutEquipment.length || (scheduleMode === 'routine' ? !days.length : !singleDate)}>
-                  {generating ? <LoaderCircle className="spin" /> : <Sparkles />}{generating ? 'A gerar…' : 'Gerar com a Fitide'}
+                <Field label="Equipamento disponível">
+                  <div className="muscle-picker equipment-picker">
+                    {workoutEquipmentOptions.map((equipment) => <button type="button" key={equipment.value} className={workoutEquipment.includes(equipment.value) ? 'selected' : ''} onClick={() => setWorkoutEquipment((current) => current.includes(equipment.value) ? current.filter((value) => value !== equipment.value) : [...current, equipment.value])}>{equipment.label}</button>)}
+                  </div>
+                </Field>
+                <Button size="lg" type="button" onClick={generateWorkout} disabled={generating || !bodyFocus.length || !workoutEquipment.length || (scheduleMode === 'routine' ? !days.length : !singleDate)}>
+                  {generating ? <LoaderCircle className="spin" /> : <Sparkles />}{generating ? 'A gerar…' : 'Gerar e agendar treino'}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => void createCustomWorkout()} disabled={scheduleMode === 'routine' ? !days.length : !singleDate}>
-                  <Plus /> Criar personalizado
+                {!workoutEquipment.length && <small className="routine-empty-hint">Escolhe pelo menos um tipo de equipamento.</small>}
+              </div>}
+              {workoutCreationMode === 'custom' && <div className="custom-method-submit">
+                <p>As escolhas de grupo, nível e equipamento não se aplicam. Vais montar o treino livremente no passo seguinte.</p>
+                <Button size="lg" type="button" onClick={() => void createCustomWorkout()} disabled={scheduleMode === 'routine' ? !days.length : !singleDate}>
+                  <Plus /> Criar e agendar personalizado
                 </Button>
-              </div>
-              {!workoutEquipment.length && <small className="routine-empty-hint">Escolhe pelo menos um tipo de equipamento.</small>}
+              </div>}
+              {!workoutCreationMode && <small className="routine-empty-hint">Seleciona um método para continuar.</small>}
               {scheduleMode === 'routine' && !days.length && <small className="routine-empty-hint">Escolhe acima os dias da nova rotina. Depois de gerar, o formulário fica limpo para agendares outra.</small>}
               {scheduleMode === 'single' && <small className="routine-empty-hint">Este treino aparecerá apenas na data escolhida e não altera a tua média semanal recorrente.</small>}
               <div className="scheduled-plans">
-                {state.workoutPlans.map((plan) => (
+                {state.workoutPlans.filter((plan) => !plan.specificDate).map((plan) => (
                   <div key={plan.id}>
                     <Dumbbell />
                     <div><strong>{plan.name}</strong><small>{scheduleLabel(plan)} · {plan.time ?? 'Sem hora'} · {plan.exercises.length} exercícios</small></div>
@@ -5194,7 +5214,7 @@ function SettingsPage({
         <WorkoutPlanEditorDialog
           plan={editingPlan}
           creating={creatingPlan}
-          level={level}
+          level={creatingPlan ? 'intermediate' : level}
           alternatives={exerciseAlternatives}
           loadingAlternatives={loadingAlternatives}
           onChange={setEditingPlan}
@@ -5656,6 +5676,131 @@ function NumberInput({
     </>
   );
 }
+type ReorderableWidget = {
+  id: string;
+  label: string;
+  element: HTMLElement;
+};
+
+function WidgetReorderButton({
+  page,
+  order,
+  onChange,
+}: {
+  page: Page;
+  order: string[];
+  onChange: (order: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<ReorderableWidget[]>([]);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  useViewportLock(open);
+
+  const findContainer = useCallback(() => {
+    const wrapper = buttonRef.current?.closest<HTMLElement>('[data-widget-page]');
+    if (!wrapper) return null;
+    if (page === 'settings') return wrapper.querySelector<HTMLElement>('.settings-grid');
+    if (page === 'progress') return wrapper.querySelector<HTMLElement>('.charts-grid');
+    if (page === 'calendar') return wrapper.querySelector<HTMLElement>('.calendar-layout');
+    if (page === 'workout') return wrapper.querySelector<HTMLElement>('.workout-layout');
+    return wrapper.querySelector<HTMLElement>('.dashboard-grid, .content-page');
+  }, [page]);
+
+  const readItems = useCallback(() => {
+    const container = findContainer();
+    if (!container) return [];
+    const seen = new Map<string, number>();
+    return Array.from(container.children)
+      .filter((child): child is HTMLElement => child instanceof HTMLElement)
+      .filter((child) => !child.matches('.page-intro, .settings-actions, .dialog-backdrop, [role="dialog"], [role="alertdialog"]'))
+      .map((element) => {
+        const heading = element.querySelector<HTMLElement>('[data-slot="card-title"], h2, h3, .eyebrow, strong');
+        const label = heading?.textContent?.trim().replace(/\s+/g, ' ') || 'Widget';
+        const classKey = Array.from(element.classList).filter((name) => !['panel', 'wide'].includes(name)).slice(0, 2).join('-');
+        const base = normalizeText(`${classKey} ${label}`).replace(/\s+/g, '-').slice(0, 72) || element.tagName.toLowerCase();
+        const occurrence = seen.get(base) ?? 0;
+        seen.set(base, occurrence + 1);
+        return { id: occurrence ? `${base}-${occurrence + 1}` : base, label, element };
+      });
+  }, [findContainer]);
+
+  const applyOrder = useCallback(() => {
+    const current = readItems();
+    const completeOrder = [...order, ...current.map((item) => item.id).filter((id) => !order.includes(id))];
+    current.forEach((item, naturalIndex) => {
+      const savedIndex = completeOrder.indexOf(item.id);
+      item.element.style.order = String(savedIndex < 0 ? naturalIndex : savedIndex);
+    });
+  }, [order, readItems]);
+
+  useEffect(() => {
+    applyOrder();
+    const container = findContainer();
+    if (!container) return;
+    const observer = new MutationObserver(() => applyOrder());
+    observer.observe(container, { childList: true });
+    return () => observer.disconnect();
+  }, [applyOrder, findContainer]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: Event) => { event.preventDefault(); setOpen(false); };
+    window.addEventListener('fitide-back', close);
+    return () => window.removeEventListener('fitide-back', close);
+  }, [open]);
+
+  function openEditor() {
+    const current = readItems();
+    const byId = new Map(current.map((item) => [item.id, item]));
+    setItems([
+      ...order.map((id) => byId.get(id)).filter((item): item is ReorderableWidget => Boolean(item)),
+      ...current.filter((item) => !order.includes(item.id)),
+    ]);
+    setOpen(true);
+  }
+
+  function move(index: number, direction: -1 | 1) {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= items.length) return;
+    const next = [...items];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    setItems(next);
+    onChange(next.map((item) => item.id));
+  }
+
+  return (
+    <>
+      <div className="widget-reorder-footer">
+        <Button ref={buttonRef} type="button" variant="outline" onClick={openEditor}>
+          <GripVertical /> Reordenar widgets
+        </Button>
+      </div>
+      {open && <OverlayPortal><div className="dialog-backdrop widget-reorder-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
+        <dialog open className="widget-reorder-dialog" aria-labelledby={`widget-order-${page}`}>
+          <header>
+            <div><p className="eyebrow">PERSONALIZAR PÁGINA</p><h2 id={`widget-order-${page}`}>Reordenar widgets</h2><small>A ordem é guardada apenas para {pageLabels[page]}.</small></div>
+            <Button type="button" variant="ghost" size="icon" aria-label="Fechar" onClick={() => setOpen(false)}><X /></Button>
+          </header>
+          <div className="widget-reorder-list">
+            {items.length > 1 ? items.map((item, index) => (
+              <div key={item.id}>
+                <GripVertical />
+                <strong>{item.label}</strong>
+                <Button type="button" variant="ghost" size="icon" aria-label={`Subir ${item.label}`} disabled={index === 0} onClick={() => move(index, -1)}><ArrowUp /></Button>
+                <Button type="button" variant="ghost" size="icon" aria-label={`Descer ${item.label}`} disabled={index === items.length - 1} onClick={() => move(index, 1)}><ArrowDown /></Button>
+              </div>
+            )) : <p className="muted-copy">Esta página ainda não tem vários widgets para reordenar.</p>}
+          </div>
+          <footer>
+            <Button type="button" variant="outline" onClick={() => { onChange([]); setItems(readItems()); }}>Repor ordem original</Button>
+            <Button type="button" onClick={() => setOpen(false)}><Check /> Concluir</Button>
+          </footer>
+        </dialog>
+      </div></OverlayPortal>}
+    </>
+  );
+}
+
 function EmptyState({
   icon: Icon,
   title,

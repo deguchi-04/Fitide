@@ -198,4 +198,5 @@ export interface AppState {
   judoProfile: JudoProfile;
   healthSnapshots: HealthSnapshot[];
   healthSyncEnabled: boolean;
+  widgetOrders: Record<string, string[]>;
 }

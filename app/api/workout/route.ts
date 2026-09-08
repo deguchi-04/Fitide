@@ -182,6 +182,19 @@ const splitFocus: Record<string, string[]> = {
   core: ['waist', 'back'],
 };
 
+const muscleRequestMap: Record<string, { bodyPart: string; targets: string[] }> = {
+  biceps: { bodyPart: 'upper arms', targets: ['biceps'] },
+  triceps: { bodyPart: 'upper arms', targets: ['triceps'] },
+  back: { bodyPart: 'back', targets: ['lats', 'upper back', 'spine'] },
+  shoulders: { bodyPart: 'shoulders', targets: ['delts'] },
+  'upper legs': { bodyPart: 'upper legs', targets: ['quads', 'hamstrings', 'glutes', 'adductors', 'abductors'] },
+  abs: { bodyPart: 'waist', targets: ['abs'] },
+  traps: { bodyPart: 'back', targets: ['traps'] },
+  forearms: { bodyPart: 'lower arms', targets: ['forearms'] },
+  core: { bodyPart: 'waist', targets: ['abs', 'spine'] },
+  calves: { bodyPart: 'lower legs', targets: ['calves'] },
+};
+
 function apiEquipment(equipment: string[] = []) {
   return [...new Set(equipment.flatMap((item) => item === 'free_weights'
     ? ['dumbbell', 'barbell', 'kettlebell']
@@ -246,9 +259,10 @@ function withCreationDefaults(exercise: WorkoutExercise, level = 'intermediate')
 
 async function catalogWorkout(apiKey: string, focus: string[], level: string, equipment: string[] = []) {
   const selectedEquipment = apiEquipment(equipment);
-  const requests = focus.slice(0, 6).map(async (bodyPart) => {
+  const requests = focus.slice(0, 6).map(async (requestedFocus) => {
+    const request = muscleRequestMap[requestedFocus] ?? { bodyPart: requestedFocus, targets: [] };
     const params = new URLSearchParams({
-      bodyPart,
+      bodyPart: request.bodyPart,
       effortLevel: level,
       sortMethod: 'popularityRank',
       sortOrder: 'ascending',
@@ -266,7 +280,10 @@ async function catalogWorkout(apiKey: string, focus: string[], level: string, eq
     const result = (await response.json()) as
       | ApiExercise[]
       | { data?: ApiExercise[] };
-    return Array.isArray(result) ? result : (result.data ?? []);
+    const exercises = Array.isArray(result) ? result : (result.data ?? []);
+    if (!request.targets.length) return exercises;
+    const exact = exercises.filter((item) => request.targets.includes((item.target ?? '').toLowerCase()));
+    return exact.length ? exact : exercises;
   });
   const groups = await Promise.all(requests);
   const selected: ApiExercise[] = [];

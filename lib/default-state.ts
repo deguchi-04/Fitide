@@ -49,4 +49,5 @@ export const defaultState: AppState = {
   },
   healthSnapshots: [],
   healthSyncEnabled: false,
+  widgetOrders: {},
 };
