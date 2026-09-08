@@ -873,10 +873,36 @@ export default function FitApp() {
     }
     try {
       const date = localDateKey();
-      const reading = await Promise.race([
+      const readNativeHealth = () => Promise.race([
         NativeFitideHealth.readToday(),
         new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('A leitura nativa do Health Connect excedeu 15 segundos.')), 15_000)),
       ]);
+      let reading: Awaited<ReturnType<FitideHealthNativePlugin['readToday']>>;
+      try {
+        reading = await readNativeHealth();
+      } catch (readError) {
+        const errorCode = readError && typeof readError === 'object' && 'code' in readError
+          ? String((readError as { code?: unknown }).code ?? '')
+          : '';
+        if (errorCode !== 'HEALTH_PERMISSIONS' || silent) throw readError;
+        setHealthSyncMessage('Autoriza a Fitide no ecrã do Health Connect para continuar.');
+        const inactive = JSON.stringify({ IsActive: false, AccessType: 'READ' });
+        await HealthFitness.requestHealthPermissions({
+          customPermissions: JSON.stringify([
+            { Variable: 'STEPS', AccessType: 'READ' },
+            { Variable: 'CALORIES_BURNED', AccessType: 'READ' },
+            { Variable: 'HEART_RATE', AccessType: 'READ' },
+            { Variable: 'SLEEP', AccessType: 'READ' },
+            { Variable: 'BODY_FAT_PERCENTAGE', AccessType: 'READ' },
+          ]),
+          allVariables: inactive,
+          fitnessVariables: inactive,
+          healthVariables: inactive,
+          profileVariables: inactive,
+          workoutVariables: inactive,
+        });
+        reading = await readNativeHealth();
+      }
       const { steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent } = reading;
       const metricValues = [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent];
       const snapshot: HealthSnapshot = {
@@ -904,7 +930,7 @@ export default function FitApp() {
         setHealthSyncStatus('error');
         const message = error instanceof Error ? error.message : 'Não foi possível ligar ao Health Connect.';
         setHealthSyncMessage(/not implemented|unimplemented|FitideHealth/i.test(message)
-          ? 'Esta instalação ainda não tem o leitor nativo. Instala o APK Fitide 3.3.2.'
+          ? 'Esta instalação ainda não tem o leitor nativo. Instala o APK Fitide 3.3.4.'
           : message);
       }
       return false;
@@ -4418,7 +4444,7 @@ function HealthConnectPanel({
         <div className="round-icon health"><HeartPulse /></div>
         <div>
           <strong>Health Connect</strong>
-          <p>Importa do relógio passos, calorias, ritmo cardíaco, sono e gordura corporal. “Sincronizar agora” apenas lê os dados já autorizados e não volta a abrir as permissões. Para rever o acesso, usa “Abrir Health Connect”.</p>
+          <p>Importa do relógio passos, calorias, ritmo cardíaco, sono e gordura corporal. Se faltar alguma permissão, “Sincronizar agora” abre a autorização uma única vez; depois passa apenas a atualizar os dados.</p>
           {latest && <small>Última sincronização: {new Date(latest.syncedAt).toLocaleString('pt-PT')} · {latest.steps?.toLocaleString('pt-PT') ?? '—'} passos</small>}
           {message && <small className={status === 'error' ? 'health-error' : ''}>{message}</small>}
           <div className="health-actions">
