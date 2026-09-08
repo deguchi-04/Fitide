@@ -850,15 +850,14 @@ export default function FitApp() {
   const [healthSyncStatus, setHealthSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
   const [healthSyncMessage, setHealthSyncMessage] = useState('');
   const healthSyncInFlight = useRef(false);
-  const healthPermissionPending = useRef(false);
   const healthLastSyncRef = useRef(0);
 
-  const syncHealthConnect = useCallback(async ({ requestPermissions = false, silent = false }: { requestPermissions?: boolean; silent?: boolean } = {}) => {
+  const syncHealthConnect = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!Capacitor.isNativePlatform() || healthSyncInFlight.current) return false;
     healthSyncInFlight.current = true;
     if (!silent) {
       setHealthSyncStatus('syncing');
-      setHealthSyncMessage(requestPermissions ? 'A verificar acesso ao Health Connect…' : 'A sincronizar os dados de hoje…');
+      setHealthSyncMessage('A sincronizar os dados de hoje…');
     }
     try {
       const date = localDateKey();
@@ -883,37 +882,16 @@ export default function FitApp() {
       const metricErrors = metricResults.flatMap((result) => result.error ? [result.error] : []);
       const [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent] = metricValues;
       if ([steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent].every((metric) => metric === undefined)) {
-        if (requestPermissions) {
-          const inactive = JSON.stringify({ IsActive: false, AccessType: 'READ' });
-          healthPermissionPending.current = true;
-          setHealthSyncStatus('idle');
-          setHealthSyncMessage('Autoriza a Fitide no Health Connect e volta à app. A sincronização continua automaticamente.');
-          void HealthFitness.requestHealthPermissions({
-            customPermissions: JSON.stringify([
-              { Variable: 'STEPS', AccessType: 'READ' },
-              { Variable: 'CALORIES_BURNED', AccessType: 'READ' },
-              { Variable: 'HEART_RATE', AccessType: 'READ' },
-              { Variable: 'SLEEP', AccessType: 'READ' },
-              { Variable: 'BODY_FAT_PERCENTAGE', AccessType: 'READ' },
-            ]),
-            allVariables: inactive,
-            fitnessVariables: inactive,
-            healthVariables: inactive,
-            profileVariables: inactive,
-            workoutVariables: inactive,
-          }).then(() => {
-            healthPermissionPending.current = false;
-            window.dispatchEvent(new Event('fitide-health-permission-returned'));
-          }).catch((error) => {
-            healthPermissionPending.current = false;
-            setHealthSyncStatus('error');
-            setHealthSyncMessage(error instanceof Error ? error.message : 'Não foi possível abrir as permissões do Health Connect.');
-          });
-          return false;
+        if (metricErrors.length === metricRequests.length) {
+          const errorText = metricErrors.map((error) => error instanceof Error ? error.message : String(error)).join(' ').toLowerCase();
+          if (/permission|permiss|denied|recus|authori|security/.test(errorText)) {
+            throw new Error('O Health Connect recusou a leitura. Confirma a Fitide em “Permissões de apps” através do botão abaixo; a sincronização já não abre essa página automaticamente.');
+          }
+          if (/tempo excedido|timeout|timed out/.test(errorText)) {
+            throw new Error('O Health Connect demorou demasiado a responder. Abre-o uma vez e tenta sincronizar novamente.');
+          }
+          throw new Error('Não foi possível ler o Health Connect agora. Abre-o uma vez e tenta sincronizar novamente.');
         }
-        throw new Error(metricErrors.length
-          ? 'A Fitide ainda não tem acesso aos dados. Em Health Connect, abre “Permissões de apps”, escolhe Fitide e permite os dados pedidos.'
-          : 'Não encontrei registos de hoje no Health Connect. Confirma se a app do relógio já sincronizou os dados.');
       }
       const snapshot: HealthSnapshot = {
         date,
@@ -931,7 +909,9 @@ export default function FitApp() {
         healthSnapshots: [...current.healthSnapshots.filter((item) => item.date !== date), snapshot],
       }));
       setHealthSyncStatus('done');
-      setHealthSyncMessage('Dados de hoje sincronizados.');
+      setHealthSyncMessage(metricValues.some((metric) => metric !== undefined)
+        ? 'Dados de hoje sincronizados.'
+        : 'Sincronização concluída. Ainda não há registos de hoje no Health Connect.');
       return true;
     } catch (error) {
       if (!silent) {
@@ -978,21 +958,13 @@ export default function FitApp() {
     };
     syncIfStale();
     const interval = window.setInterval(syncIfStale, 15 * 60 * 1000);
-    const syncAfterPermission = () => window.setTimeout(() => void syncHealthConnect({ silent: false }), 250);
-    window.addEventListener('fitide-health-permission-returned', syncAfterPermission);
     let removeListener: (() => Promise<void>) | undefined;
     void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (!isActive) return;
-      if (healthPermissionPending.current) {
-        healthPermissionPending.current = false;
-        window.setTimeout(() => void syncHealthConnect({ silent: false }), 350);
-        return;
-      }
       syncIfStale();
     }).then((handle) => { removeListener = () => handle.remove(); });
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener('fitide-health-permission-returned', syncAfterPermission);
       void removeListener?.();
     };
   }, [loaded, state.healthSyncEnabled, syncHealthConnect]);
@@ -1228,7 +1200,7 @@ export default function FitApp() {
         onGo={setPage}
         healthSyncStatus={healthSyncStatus}
         healthSyncMessage={healthSyncMessage}
-        onHealthSync={() => syncHealthConnect({ requestPermissions: !state.healthSyncEnabled })}
+        onHealthSync={() => syncHealthConnect()}
       />
     );
     if (targetPage === 'meals') return (
@@ -1253,7 +1225,7 @@ export default function FitApp() {
       />
     );
     if (targetPage === 'progress') return <ProgressPage state={state} setState={setState} />;
-    return <SettingsPage state={state} setState={setState} onReset={resetProfile} healthSyncStatus={healthSyncStatus} healthSyncMessage={healthSyncMessage} onHealthSync={() => syncHealthConnect({ requestPermissions: !state.healthSyncEnabled })} />;
+    return <SettingsPage state={state} setState={setState} onReset={resetProfile} healthSyncStatus={healthSyncStatus} healthSyncMessage={healthSyncMessage} onHealthSync={() => syncHealthConnect()} />;
   }
 
   return (
@@ -2135,14 +2107,14 @@ function MealsPage({
       </section>
       <section className="summary-strip">
         <MiniStat
-          label="Energia"
+          label="Total"
           value={`${Math.round(consumed.calories)} kcal`}
         />
         <MiniStat label="Proteína" value={`${consumed.protein.toFixed(1)} g`} />
         <MiniStat label="Fibra" value={`${consumed.fiber.toFixed(1)} g`} />
         <MiniStat
-          label="Vitamina C"
-          value={`${consumed.vitaminC.toFixed(1)} mg`}
+          label="Hidratos"
+          value={`${consumed.carbs.toFixed(1)} g`}
         />
       </section>
       <div className="meal-list">
@@ -4524,11 +4496,11 @@ function HealthConnectPanel({
         <div className="round-icon health"><HeartPulse /></div>
         <div>
           <strong>Health Connect</strong>
-          <p>Importa do relógio passos, calorias, ritmo cardíaco, sono e gordura corporal. A app do relógio estar ligada não autoriza automaticamente a Fitide: permite também a Fitide em “Permissões de apps”. Depois disso, sincroniza a cada 15 minutos e ao voltar à app.</p>
+          <p>Importa do relógio passos, calorias, ritmo cardíaco, sono e gordura corporal. “Sincronizar agora” apenas lê os dados já autorizados e não volta a abrir as permissões. Para rever o acesso, usa “Abrir Health Connect”.</p>
           {latest && <small>Última sincronização: {new Date(latest.syncedAt).toLocaleString('pt-PT')} · {latest.steps?.toLocaleString('pt-PT') ?? '—'} passos</small>}
           {message && <small className={status === 'error' ? 'health-error' : ''}>{message}</small>}
           <div className="health-actions">
-            <Button type="button" onClick={() => void onSync()} disabled={!native || status === 'syncing'}>{status === 'syncing' ? <LoaderCircle className="spin" /> : <HeartPulse />}{native ? (state.healthSyncEnabled ? 'Sincronizar agora' : 'Ligar e sincronizar') : 'Disponível no APK'}</Button>
+            <Button type="button" onClick={() => void onSync()} disabled={!native || status === 'syncing'}>{status === 'syncing' ? <LoaderCircle className="spin" /> : <HeartPulse />}{native ? 'Sincronizar agora' : 'Disponível no APK'}</Button>
             {native && <Button type="button" variant="outline" onClick={() => void HealthFitness.openHealthConnect().catch(() => undefined)}>Abrir Health Connect</Button>}
           </div>
         </div>
@@ -4972,7 +4944,15 @@ function SettingsPage({
                     min={0}
                     max={1000}
                     step="25"
-                    onChange={(value) => setGoals({ ...goals, calorieDeficit: value, calorieTarget: Math.max(1000, draftMaintenance - value) })}
+                    onChange={(value) => {
+                      const nextGoals = {
+                        ...goals,
+                        calorieDeficit: value,
+                        calorieTarget: Math.max(1000, draftMaintenance - value),
+                      };
+                      setGoals(nextGoals);
+                      setState((current) => ({ ...current, goals: nextGoals }));
+                    }}
                   />
                 </Field>
               )}
