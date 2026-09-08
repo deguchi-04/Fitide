@@ -95,6 +95,7 @@ export interface FastEntry {
 
 export interface WorkoutExercise {
   id: string;
+  muscleGroups?: string[];
   name: string;
   target: string;
   equipment: string;

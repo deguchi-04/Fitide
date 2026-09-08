@@ -42,6 +42,8 @@
   --orange: #f06742;
   --green: #13805f;
   --blue: #35a6d1;
+  --electric-blue: var(--blue);
+  --apricot: var(--orange);
   --radius: .875rem;
 }
 
@@ -597,20 +599,18 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 .custom-method-submit { display: grid; gap: 12px; padding: 16px; border: 1px solid color-mix(in srgb,var(--apricot) 38%,var(--border)); border-radius: 15px; background: color-mix(in srgb,var(--apricot) 8%,var(--card)); }
 .custom-method-submit p { margin: 0; color: var(--muted-foreground); line-height: 1.5; }
 .page-composition { width: 100%; }
-.widget-reorder-footer { width: min(1180px,100%); display: flex; justify-content: center; margin: 24px auto 8px; padding-bottom: 16px; }
-.widget-reorder-footer button { min-height: 46px; border-style: dashed; color: var(--muted-foreground); }
+.widget-reorder-footer { width: min(1180px,100%); display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; margin: 24px auto 8px; padding: 14px; }
+.widget-reorder-footer:not(.is-editing) button { min-height: 46px; border-style: dashed; color: var(--muted-foreground); }
+.widget-reorder-footer.is-editing { position: sticky; bottom: 90px; z-index: 30; background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 8px 30px #0003; }
+.widget-reorder-footer.is-editing > span:not(.sr-only) { font-size: 14px; flex: 1 1 220px; color: var(--foreground); }
 .widget-reorder-footer svg { width: 18px; }
-.widget-reorder-backdrop { z-index: 170; padding: 16px; align-items: center; }
-.widget-reorder-dialog { width: min(560px,100%); max-height: calc(100dvh - 32px); margin: 0; padding: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 22px; background: var(--card); color: var(--foreground); box-shadow: 0 30px 90px rgba(3,17,26,.35); }
-.widget-reorder-dialog > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 21px; border-bottom: 1px solid var(--border); }
-.widget-reorder-dialog h2 { margin: 0; font-size: 25px; letter-spacing: -.035em; }
-.widget-reorder-dialog header small { color: var(--muted-foreground); }
-.widget-reorder-list { min-height: 0; display: grid; overflow-y: auto; padding: 8px 20px; }
-.widget-reorder-list > div { display: grid; grid-template-columns: 26px minmax(0,1fr) 42px 42px; gap: 7px; align-items: center; min-height: 58px; border-bottom: 1px solid var(--border); }
-.widget-reorder-list > div > svg { width: 17px; color: var(--muted-foreground); }
-.widget-reorder-list button svg { width: 17px; }
-.widget-reorder-list > p { padding: 24px 0; }
-.widget-reorder-dialog > footer { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px 20px max(14px,env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
+.widgets-editing > .widget-editable { position: relative !important; outline: 2px dashed var(--electric-blue); outline-offset: -2px; padding-top: 52px !important; min-height: 90px; transition: opacity .15s; }
+.widget-drag-handle { position: absolute; inset: 7px 8px auto auto; display: flex; align-items: center; gap: 5px; height: 38px; min-width: 88px; padding: 5px 12px; border-radius: 10px; border: 1px solid var(--electric-blue); background: var(--card); color: var(--foreground); font-size: 14px; font-weight: 700; cursor: grab; touch-action: none; user-select: none; z-index: 15; }
+.widget-drag-handle:active { cursor: grabbing; background: color-mix(in srgb,var(--electric-blue) 15%,var(--card)); }
+.widget-drag-handle svg { width: 18px; height: 18px; }
+.widget-drag-source { opacity: .3; }
+.widget-drag-preview { position: fixed; inset: 0 auto auto 0; z-index: 9999; pointer-events: none; padding: 16px 22px; max-width: min(300px,75vw); border: 2px solid var(--electric-blue); border-radius: 14px; box-shadow: 0 12px 40px #0005; background: var(--card); color: var(--foreground); font-size: 16px; font-weight: 750; }
+.workout-error { color: #d33b30; }
 .routine-empty-hint { color: var(--muted-foreground); }
 .scheduled-plans > div { grid-template-columns: 36px minmax(0,1fr) auto auto; }
 .training-panel [data-slot='card-content'] { display: grid; gap: 15px; }
@@ -660,9 +660,6 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
   .workout-creation-actions { grid-template-columns: 1fr; }
   .workout-method-picker, .workout-method-options { grid-template-columns: 1fr; }
   .workout-method-options > .field, .workout-method-options > button, .workout-method-options > small { grid-column: 1; }
-  .widget-reorder-backdrop { align-items: end; padding: 0; }
-  .widget-reorder-dialog { width: 100%; max-height: 92dvh; border-width: 1px 0 0; border-radius: 22px 22px 0 0; }
-  .widget-reorder-dialog > footer { grid-template-columns: 1fr; }
   .workout-live .rest-banner { top: 126px; }
   .exercise-demo-stats { grid-template-columns: 1fr 1fr; }
 }

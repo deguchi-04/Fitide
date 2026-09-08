@@ -1,5 +1,7 @@
 import { env } from 'cloudflare:workers';
 import type { WorkoutExercise } from '@/lib/fit-types';
+import catalogSnapshot from '@/lib/data/workout-catalog.json';
+import { exerciseGroups } from '@/lib/workout-groups';
 
 type ApiExercise = {
   id?: string;
@@ -20,7 +22,7 @@ const fieldTranslations: Record<string, string> = {
   triceps: 'Tríceps', 'upper back': 'Parte superior das costas', back: 'Costas', chest: 'Peito',
   shoulders: 'Ombros', waist: 'Abdominais', 'upper arms': 'Braços', 'lower arms': 'Antebraços',
   'upper legs': 'Pernas', 'lower legs': 'Gémeos', assisted: 'Assistido', band: 'Banda elástica',
-  barbell: 'Barra', 'body weight': 'Peso corporal', 'bosu ball': 'Bosu', cable: 'Cabo',
+  barbell: 'Barra', 'body weight': 'Peso corporal', 'bosu ball': 'Bosu', cable: 'Polia / cabo',
   dumbbell: 'Halteres', 'elliptical machine': 'Elíptica', 'ez barbell': 'Barra EZ', hammer: 'Martelo',
   kettlebell: 'Kettlebell', 'leverage machine': 'Máquina', 'medicine ball': 'Bola medicinal',
   'olympic barbell': 'Barra olímpica', 'resistance band': 'Banda de resistência', roller: 'Rolo',
@@ -28,6 +30,14 @@ const fieldTranslations: Record<string, string> = {
   'stability ball': 'Bola suíça', 'stationary bike': 'Bicicleta estática', 'stepmill machine': 'Escada',
   tire: 'Pneu', 'trap bar': 'Barra hexagonal', 'upper body ergometer': 'Ergómetro de braços',
   weighted: 'Com peso', 'wheel roller': 'Roda abdominal', other: 'Outro',
+  'assisted (towel)': 'Assistido com toalha',
+  'body weight (with resistance band)': 'Peso corporal com banda elástica',
+  'dumbbell (used as handles for deeper range)': 'Halteres como apoio',
+  'dumbbell, exercise ball': 'Halteres e bola suíça',
+  'ez barbell, exercise ball': 'Barra EZ e bola suíça',
+  'dumbbell, exercise ball, tennis ball': 'Halteres, bola suíça e bola de ténis',
+  'skierg machine': 'SkiErg', 'cardiovascular system': 'Cardiovascular',
+  'levator scapulae': 'Elevador da escápula',
 };
 
 const exercisePhrases: Array<[string, string]> = [
@@ -182,18 +192,6 @@ const splitFocus: Record<string, string[]> = {
   core: ['waist', 'back'],
 };
 
-const muscleRequestMap: Record<string, { bodyPart: string; targets: string[] }> = {
-  biceps: { bodyPart: 'upper arms', targets: ['biceps'] },
-  triceps: { bodyPart: 'upper arms', targets: ['triceps'] },
-  back: { bodyPart: 'back', targets: ['lats', 'upper back', 'spine'] },
-  shoulders: { bodyPart: 'shoulders', targets: ['delts'] },
-  'upper legs': { bodyPart: 'upper legs', targets: ['quads', 'hamstrings', 'glutes', 'adductors', 'abductors'] },
-  abs: { bodyPart: 'waist', targets: ['abs'] },
-  traps: { bodyPart: 'back', targets: ['traps'] },
-  forearms: { bodyPart: 'lower arms', targets: ['forearms'] },
-  core: { bodyPart: 'waist', targets: ['abs', 'spine'] },
-  calves: { bodyPart: 'lower legs', targets: ['calves'] },
-};
 
 function apiEquipment(equipment: string[] = []) {
   return [...new Set(equipment.flatMap((item) => item === 'free_weights'
@@ -226,6 +224,7 @@ function asWorkoutExercise(
   const id = item.id ?? `wx-${index}`;
   return {
     id,
+    muscleGroups: exerciseGroups({ name: item.name ?? '', target: item.target ?? item.bodyPart ?? '' }),
     name: translateExerciseName(item.name) || `Exercício ${index + 1}`,
     target: translateField(item.target ?? item.bodyPart),
     equipment: translateField(item.equipment),
@@ -257,67 +256,37 @@ function withCreationDefaults(exercise: WorkoutExercise, level = 'intermediate')
   };
 }
 
-async function catalogWorkout(apiKey: string, focus: string[], level: string, equipment: string[] = []) {
-  const selectedEquipment = apiEquipment(equipment);
-  const requests = focus.slice(0, 6).map(async (requestedFocus) => {
-    const request = muscleRequestMap[requestedFocus] ?? { bodyPart: requestedFocus, targets: [] };
-    const params = new URLSearchParams({
-      bodyPart: request.bodyPart,
-      effortLevel: level,
-      sortMethod: 'popularityRank',
-      sortOrder: 'ascending',
-      limit: '4',
-      lang: 'en',
-    });
-    if (selectedEquipment.length) params.set('equipment', selectedEquipment.join(','));
-    const response = await fetch(
-      `https://api.workoutxapp.com/v1/exercises?${params}`,
-      {
-        headers: { 'X-WorkoutX-Key': apiKey },
-      },
-    );
-    if (!response.ok) return [] as ApiExercise[];
-    const result = (await response.json()) as
-      | ApiExercise[]
-      | { data?: ApiExercise[] };
-    const exercises = Array.isArray(result) ? result : (result.data ?? []);
-    if (!request.targets.length) return exercises;
-    const exact = exercises.filter((item) => request.targets.includes((item.target ?? '').toLowerCase()));
-    return exact.length ? exact : exercises;
-  });
-  const groups = await Promise.all(requests);
-  const selected: ApiExercise[] = [];
-  groups.forEach((group, groupIndex) => {
-    const candidates = group.filter(
-      (item) => item.id && !selected.some((chosen) => chosen.id === item.id),
-    );
-    const first = candidates[groupIndex % Math.max(1, candidates.length)];
-    if (first) selected.push(first);
-    const second = candidates.find(
-      (item) => !selected.some((chosen) => chosen.id === item.id),
-    );
-    if (second && selected.length < 8) selected.push(second);
-  });
-  return selected
-    .slice(0, 8)
-    .map((item, index) => asWorkoutExercise(item, index, level));
+function fullExerciseCatalog(level: string) {
+  return catalogSnapshot.exercises.map((item, index) => asWorkoutExercise(item, index, level))
+    .sort((a, b) => a.name.localeCompare(b.name, 'pt-PT'));
 }
 
-async function fullExerciseCatalog(apiKey: string, level: string) {
-  const params = new URLSearchParams({
-    effortLevel: level,
-    sortMethod: 'popularityRank',
-    sortOrder: 'ascending',
-    limit: '100',
-    lang: 'en',
-  });
-  const response = await fetch(`https://api.workoutxapp.com/v1/exercises?${params}`, {
-    headers: { 'X-WorkoutX-Key': apiKey },
-  });
-  if (!response.ok) return [] as WorkoutExercise[];
-  const result = (await response.json()) as ApiExercise[] | { data?: ApiExercise[] };
-  const exercises = Array.isArray(result) ? result : (result.data ?? []);
-  return exercises.map((item, index) => asWorkoutExercise(item, index, level));
+function catalogWorkout(focus: string[], level: string, equipment: string[] = []) {
+  const requested = apiEquipment(equipment);
+  const equipmentMatches = (value: string) => {
+    const normalized = value.toLowerCase();
+    return !requested.length || requested.includes(normalized)
+      || (requested.includes('barbell') && ['ez barbell', 'olympic barbell', 'trap bar'].includes(normalized))
+      || (requested.includes('leverage machine') && ['sled machine', 'smith machine'].includes(normalized))
+      || (requested.includes('resistance band') && normalized === 'band');
+  };
+  const candidates = catalogSnapshot.exercises.filter((item) => {
+    const groups = exerciseGroups({ name: item.name, target: item.target ?? '' });
+    const inGroup = focus.some((group) => groups.includes(group)
+      || item.bodyPart?.toLowerCase() === group);
+    return inGroup && equipmentMatches(item.equipment ?? '');
+  }).sort((a, b) => Number(b.difficulty === level) - Number(a.difficulty === level));
+  // Choose across equipment, then fill the session without restricting the editor catalog.
+  const selected: typeof candidates = [];
+  for (const item of candidates) {
+    if (!selected.some((chosen) => chosen.equipment === item.equipment)) selected.push(item);
+    if (selected.length === 6) break;
+  }
+  for (const item of candidates) {
+    if (selected.length >= 6) break;
+    if (!selected.some((chosen) => chosen.id === item.id)) selected.push(item);
+  }
+  return selected.map((item, index) => asWorkoutExercise(item, index, level));
 }
 
 export async function GET(request: Request) {
@@ -356,15 +325,14 @@ export async function POST(request: Request) {
   const apiKey = env.WORKOUTX_API_KEY;
 
   if (body.action === 'catalog') {
-    if (apiKey) {
-      try {
-        const exercises = await fullExerciseCatalog(apiKey, body.level ?? 'intermediate');
-        if (exercises.length) return Response.json({ source: 'WorkoutX', exercises });
-      } catch {
-        // Keep the editor usable with the local catalogue.
-      }
-    }
-    return Response.json({ source: 'Demonstração', exercises: fallbackBase.map((exercise) => withCreationDefaults(exercise, body.level)) });
+    const exercises = fullExerciseCatalog(body.level ?? 'intermediate');
+    return Response.json({ source: 'WorkoutX', exercises, total: catalogSnapshot.total, complete: true, updatedAt: catalogSnapshot.updatedAt });
+  }
+
+  if (body.bodyFocus?.length) {
+    const exercises = catalogWorkout(focus, body.level ?? 'intermediate', body.equipment);
+    if (!exercises.length) return Response.json({ error: 'Não há exercícios para esta combinação. Experimenta outro equipamento.' }, { status: 422 });
+    return Response.json({ source: 'WorkoutX', exercises });
   }
 
   if (apiKey) {
@@ -410,8 +378,7 @@ export async function POST(request: Request) {
 
       // Free WorkoutX keys include the catalogue and GIFs even when the AI
       // generator is unavailable, so assemble a balanced session locally.
-      const exercises = await catalogWorkout(
-        apiKey,
+      const exercises = catalogWorkout(
         focus,
         body.level ?? 'intermediate',
         body.equipment,

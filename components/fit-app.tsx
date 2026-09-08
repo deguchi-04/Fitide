@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { workoutGroups, exerciseGroups } from '@/lib/workout-groups';
+import { WidgetReorderButton } from '@/components/widget-reorder';
 import ReactCrop, { type PercentCrop, type PixelCrop } from 'react-image-crop';
 import {
   Activity as ActivityIcon,
   Apple,
-  ArrowDown,
   ArrowLeft,
-  ArrowUp,
   BookOpen,
   Camera,
   CalendarDays,
@@ -21,7 +21,6 @@ import {
   Dumbbell,
   ExternalLink,
   Flame,
-  GripVertical,
   HeartPulse,
   Home,
   CircleHelp,
@@ -1123,7 +1122,7 @@ export default function FitApp() {
 
   function handleSwipeStart(event: React.TouchEvent<HTMLElement>) {
     const target = event.target as HTMLElement;
-    if (!swipePageOrder.includes(page) || event.touches.length !== 1 || target.closest('input, textarea, select, [role="dialog"], .number-wheel-card, .chart-range')) {
+    if (!swipePageOrder.includes(page) || event.touches.length !== 1 || target.closest('input, textarea, select, [role="dialog"], .number-wheel-card, .chart-range, .widgets-editing, .widget-reorder-footer')) {
       swipeStart.current = null;
       return;
     }
@@ -1245,6 +1244,7 @@ export default function FitApp() {
         {content}
         <WidgetReorderButton
           page={targetPage}
+          label={pageLabels[targetPage]}
           order={state.widgetOrders[targetPage] ?? []}
           onChange={(order) => setState((current) => ({
             ...current,
@@ -2138,7 +2138,7 @@ function MealsPage({
           value={`${Math.round(consumed.calories)} kcal`}
         />
         <MiniStat label="Proteína" value={`${consumed.protein.toFixed(1)} g`} />
-        <MiniStat label="Fibra" value={`${consumed.fiber.toFixed(1)} g`} />
+        <MiniStat label="Gordura" value={`${consumed.fat.toFixed(1)} g`} />
         <MiniStat
           label="Hidratos"
           value={`${consumed.carbs.toFixed(1)} g`}
@@ -4501,6 +4501,7 @@ function SettingsPage({
   const [workoutEquipment, setWorkoutEquipment] = useState<string[]>(defaultWorkoutEquipment);
   const [workoutCreationMode, setWorkoutCreationMode] = useState<'fitide' | 'custom' | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [workoutError, setWorkoutError] = useState('');
   const [editingPlan, setEditingPlan] = useState<WorkoutPlan | null>(null);
   const [creatingPlan, setCreatingPlan] = useState(false);
   const [exerciseAlternatives, setExerciseAlternatives] = useState<WorkoutExercise[]>([]);
@@ -4584,6 +4585,7 @@ function SettingsPage({
   }
   async function generateWorkout() {
     if (scheduleMode === 'routine' ? !days.length : !singleDate) return;
+    setWorkoutError('');
     setGenerating(true);
     try {
       const response = await fetch('/api/workout', {
@@ -4596,7 +4598,10 @@ function SettingsPage({
           equipment: workoutEquipment,
         }),
       });
-      if (!response.ok) throw new Error('workout');
+      if (!response.ok) {
+        const failure = await response.json() as { error?: string };
+        throw new Error(failure.error ?? 'Não foi possível gerar o treino. Tenta novamente.');
+      }
       const result = (await response.json()) as { source: WorkoutPlan['source']; exercises: WorkoutPlan['exercises'] };
       const activityId = uid();
       const plan: WorkoutPlan = {
@@ -4629,6 +4634,8 @@ function SettingsPage({
       setBodyFocus(['biceps']);
       setWorkoutEquipment(defaultWorkoutEquipment);
       setWorkoutCreationMode(null);
+    } catch (error) {
+      setWorkoutError(error instanceof Error ? error.message : 'Não foi possível gerar o treino.');
     } finally {
       setGenerating(false);
     }
@@ -4646,7 +4653,7 @@ function SettingsPage({
       if (!response.ok) return;
       const result = (await response.json()) as { exercises?: WorkoutExercise[] };
       if (result.exercises?.length) {
-        setExerciseAlternatives((current) => [...current, ...result.exercises!].filter((exercise, index, items) => items.findIndex((item) => item.id === exercise.id) === index));
+        setExerciseAlternatives(result.exercises);
       }
     } finally {
       setLoadingAlternatives(false);
@@ -5137,6 +5144,7 @@ function SettingsPage({
                 </Button>
               </div>}
               {!workoutCreationMode && <small className="routine-empty-hint">Seleciona um método para continuar.</small>}
+              {workoutError && <p role="alert" className="workout-error">{workoutError}</p>}
               {scheduleMode === 'routine' && !days.length && <small className="routine-empty-hint">Escolhe acima os dias da nova rotina. Depois de gerar, o formulário fica limpo para agendares outra.</small>}
               {scheduleMode === 'single' && <small className="routine-empty-hint">Este treino aparecerá apenas na data escolhida e não altera a tua média semanal recorrente.</small>}
               <div className="scheduled-plans">
@@ -5255,16 +5263,23 @@ function WorkoutPlanEditorDialog({
   onClose: () => void;
 }) {
   const [equipmentFilter, setEquipmentFilter] = useState('all');
+  const [groupFilter, setGroupFilter] = useState('all');
   const [exerciseSearch, setExerciseSearch] = useState('');
   const equipmentChoices = useMemo(() => [...new Set(alternatives.map((exercise) => exercise.equipment).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-PT')), [alternatives]);
   const filteredAlternatives = useMemo(() => {
     const query = normalizeText(exerciseSearch);
     return alternatives.filter((exercise) => {
+      if (groupFilter !== 'all' && !exerciseGroups(exercise).includes(groupFilter)) return false;
       if (equipmentFilter !== 'all' && exercise.equipment !== equipmentFilter) return false;
       if (!query) return true;
       return normalizeText(`${exercise.name} ${exercise.target} ${exercise.equipment}`).includes(query);
     });
-  }, [alternatives, equipmentFilter, exerciseSearch]);
+  }, [alternatives, equipmentFilter, exerciseSearch, groupFilter]);
+  const groupedAlternatives = workoutGroups.map((group) => ({
+    ...group,
+    exercises: filteredAlternatives.filter((exercise) =>
+      (groupFilter === 'all' ? exerciseGroups(exercise)[0] : groupFilter) === group.value),
+  })).filter((group) => group.exercises.length);
 
   useEffect(() => {
     const close = (event: Event) => { event.preventDefault(); onClose(); };
@@ -5330,9 +5345,15 @@ function WorkoutPlanEditorDialog({
         <div className="workout-editor-list">
           <section className="custom-workout-name">
             <Field label="Nome do treino"><Input value={plan.name} onChange={(event) => onChange({ ...plan, name: event.target.value })} placeholder="Ex.: Peito e tríceps" /></Field>
-            {creating && <p>Escolhe exercícios do catálogo ou adiciona um manualmente. Todos começam com 12 repetições e uma carga inicial editável adequada ao nível selecionado.</p>}
+            {creating && <p>Escolhe livremente os exercícios. Podes editar séries, repetições, carga e descanso em cada um.</p>}
           </section>
           <section className="workout-editor-catalog" aria-label="Adicionar exercícios">
+            <Field label="Grupo muscular">
+              <select value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}>
+                <option value="all">Todos os grupos</option>
+                {workoutGroups.map((group) => <option key={group.value} value={group.value}>{group.label}</option>)}
+              </select>
+            </Field>
             <div>
               <Field label="Procurar no catálogo">
                 <Input value={exerciseSearch} onChange={(event) => setExerciseSearch(event.target.value)} placeholder="Ex.: remada, peito, halteres…" />
@@ -5348,7 +5369,9 @@ function WorkoutPlanEditorDialog({
               <Field label={loadingAlternatives ? 'A carregar catálogo…' : `${filteredAlternatives.length} exercícios disponíveis`}>
                 <select value="" disabled={loadingAlternatives || !filteredAlternatives.length} onChange={(event) => addExercise(event.target.value)}>
                   <option value="">Adicionar exercício do catálogo…</option>
-                  {filteredAlternatives.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name} · {exercise.target}</option>)}
+                  {groupedAlternatives.map((group) => <optgroup key={group.value} label={group.label}>
+                    {group.exercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name} · {exercise.equipment}</option>)}
+                  </optgroup>)}
                 </select>
               </Field>
               <Button type="button" variant="outline" onClick={addManualExercise}><Plus /> Adicionar manualmente</Button>
@@ -5673,130 +5696,6 @@ function NumberInput({
           </section>
         </div></OverlayPortal>
       )}
-    </>
-  );
-}
-type ReorderableWidget = {
-  id: string;
-  label: string;
-  element: HTMLElement;
-};
-
-function WidgetReorderButton({
-  page,
-  order,
-  onChange,
-}: {
-  page: Page;
-  order: string[];
-  onChange: (order: string[]) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<ReorderableWidget[]>([]);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  useViewportLock(open);
-
-  const findContainer = useCallback(() => {
-    const wrapper = buttonRef.current?.closest<HTMLElement>('[data-widget-page]');
-    if (!wrapper) return null;
-    if (page === 'settings') return wrapper.querySelector<HTMLElement>('.settings-grid');
-    if (page === 'progress') return wrapper.querySelector<HTMLElement>('.charts-grid');
-    if (page === 'calendar') return wrapper.querySelector<HTMLElement>('.calendar-layout');
-    if (page === 'workout') return wrapper.querySelector<HTMLElement>('.workout-layout');
-    return wrapper.querySelector<HTMLElement>('.dashboard-grid, .content-page');
-  }, [page]);
-
-  const readItems = useCallback(() => {
-    const container = findContainer();
-    if (!container) return [];
-    const seen = new Map<string, number>();
-    return Array.from(container.children)
-      .filter((child): child is HTMLElement => child instanceof HTMLElement)
-      .filter((child) => !child.matches('.page-intro, .settings-actions, .dialog-backdrop, [role="dialog"], [role="alertdialog"]'))
-      .map((element) => {
-        const heading = element.querySelector<HTMLElement>('[data-slot="card-title"], h2, h3, .eyebrow, strong');
-        const label = heading?.textContent?.trim().replace(/\s+/g, ' ') || 'Widget';
-        const classKey = Array.from(element.classList).filter((name) => !['panel', 'wide'].includes(name)).slice(0, 2).join('-');
-        const base = normalizeText(`${classKey} ${label}`).replace(/\s+/g, '-').slice(0, 72) || element.tagName.toLowerCase();
-        const occurrence = seen.get(base) ?? 0;
-        seen.set(base, occurrence + 1);
-        return { id: occurrence ? `${base}-${occurrence + 1}` : base, label, element };
-      });
-  }, [findContainer]);
-
-  const applyOrder = useCallback(() => {
-    const current = readItems();
-    const completeOrder = [...order, ...current.map((item) => item.id).filter((id) => !order.includes(id))];
-    current.forEach((item, naturalIndex) => {
-      const savedIndex = completeOrder.indexOf(item.id);
-      item.element.style.order = String(savedIndex < 0 ? naturalIndex : savedIndex);
-    });
-  }, [order, readItems]);
-
-  useEffect(() => {
-    applyOrder();
-    const container = findContainer();
-    if (!container) return;
-    const observer = new MutationObserver(() => applyOrder());
-    observer.observe(container, { childList: true });
-    return () => observer.disconnect();
-  }, [applyOrder, findContainer]);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: Event) => { event.preventDefault(); setOpen(false); };
-    window.addEventListener('fitide-back', close);
-    return () => window.removeEventListener('fitide-back', close);
-  }, [open]);
-
-  function openEditor() {
-    const current = readItems();
-    const byId = new Map(current.map((item) => [item.id, item]));
-    setItems([
-      ...order.map((id) => byId.get(id)).filter((item): item is ReorderableWidget => Boolean(item)),
-      ...current.filter((item) => !order.includes(item.id)),
-    ]);
-    setOpen(true);
-  }
-
-  function move(index: number, direction: -1 | 1) {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= items.length) return;
-    const next = [...items];
-    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-    setItems(next);
-    onChange(next.map((item) => item.id));
-  }
-
-  return (
-    <>
-      <div className="widget-reorder-footer">
-        <Button ref={buttonRef} type="button" variant="outline" onClick={openEditor}>
-          <GripVertical /> Reordenar widgets
-        </Button>
-      </div>
-      {open && <OverlayPortal><div className="dialog-backdrop widget-reorder-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
-        <dialog open className="widget-reorder-dialog" aria-labelledby={`widget-order-${page}`}>
-          <header>
-            <div><p className="eyebrow">PERSONALIZAR PÁGINA</p><h2 id={`widget-order-${page}`}>Reordenar widgets</h2><small>A ordem é guardada apenas para {pageLabels[page]}.</small></div>
-            <Button type="button" variant="ghost" size="icon" aria-label="Fechar" onClick={() => setOpen(false)}><X /></Button>
-          </header>
-          <div className="widget-reorder-list">
-            {items.length > 1 ? items.map((item, index) => (
-              <div key={item.id}>
-                <GripVertical />
-                <strong>{item.label}</strong>
-                <Button type="button" variant="ghost" size="icon" aria-label={`Subir ${item.label}`} disabled={index === 0} onClick={() => move(index, -1)}><ArrowUp /></Button>
-                <Button type="button" variant="ghost" size="icon" aria-label={`Descer ${item.label}`} disabled={index === items.length - 1} onClick={() => move(index, 1)}><ArrowDown /></Button>
-              </div>
-            )) : <p className="muted-copy">Esta página ainda não tem vários widgets para reordenar.</p>}
-          </div>
-          <footer>
-            <Button type="button" variant="outline" onClick={() => { onChange([]); setItems(readItems()); }}>Repor ordem original</Button>
-            <Button type="button" onClick={() => setOpen(false)}><Check /> Concluir</Button>
-          </footer>
-        </dialog>
-      </div></OverlayPortal>}
     </>
   );
 }
