@@ -118,6 +118,17 @@ interface WorkoutTimerNativePlugin {
   stop(): Promise<void>;
 }
 
+interface FitideHealthNativePlugin {
+  readToday(): Promise<{
+    steps?: number;
+    activeCalories?: number;
+    averageHeartRate?: number;
+    sleepMinutes?: number;
+    bodyFatPercent?: number;
+    missingMetrics?: string[];
+  }>;
+}
+
 interface NativeLabelPhotoResult {
   path?: string;
   webPath?: string;
@@ -128,6 +139,7 @@ interface NativeLabelPhotoResult {
 }
 
 const NativeWorkoutTimer = registerPlugin<WorkoutTimerNativePlugin>('WorkoutTimer');
+const NativeFitideHealth = registerPlugin<FitideHealthNativePlugin>('FitideHealth');
 
 type Page =
   | 'today'
@@ -861,38 +873,12 @@ export default function FitApp() {
     }
     try {
       const date = localDateKey();
-      const start = new Date(`${date}T00:00:00`);
-      const end = new Date(start);
-      end.setDate(end.getDate() + 1);
-      const metricRequests = [
-        ['STEPS', 'SUM'],
-        ['CALORIES_BURNED', 'SUM'],
-        ['HEART_RATE', 'AVERAGE'],
-        ['SLEEP', 'SUM'],
-        ['BODY_FAT_PERCENTAGE', 'AVERAGE'],
-      ] as const;
-      const metricResults = await Promise.all(metricRequests.map(async ([variable, operation]) => {
-        try {
-          return { value: await queryHealthMetric(variable, operation, start, end) };
-        } catch (error) {
-          return { value: undefined, error };
-        }
-      }));
-      const metricValues = metricResults.map((result) => result.value);
-      const metricErrors = metricResults.flatMap((result) => result.error ? [result.error] : []);
-      const [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent] = metricValues;
-      if ([steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent].every((metric) => metric === undefined)) {
-        if (metricErrors.length === metricRequests.length) {
-          const errorText = metricErrors.map((error) => error instanceof Error ? error.message : String(error)).join(' ').toLowerCase();
-          if (/permission|permiss|denied|recus|authori|security/.test(errorText)) {
-            throw new Error('O Health Connect recusou a leitura. Confirma a Fitide em “Permissões de apps” através do botão abaixo; a sincronização já não abre essa página automaticamente.');
-          }
-          if (/tempo excedido|timeout|timed out/.test(errorText)) {
-            throw new Error('O Health Connect demorou demasiado a responder. Abre-o uma vez e tenta sincronizar novamente.');
-          }
-          throw new Error('Não foi possível ler o Health Connect agora. Abre-o uma vez e tenta sincronizar novamente.');
-        }
-      }
+      const reading = await Promise.race([
+        NativeFitideHealth.readToday(),
+        new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('A leitura nativa do Health Connect excedeu 15 segundos.')), 15_000)),
+      ]);
+      const { steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent } = reading;
+      const metricValues = [steps, activeCalories, averageHeartRate, sleepMinutes, bodyFatPercent];
       const snapshot: HealthSnapshot = {
         date,
         steps: steps === undefined ? undefined : Math.round(steps),
@@ -916,7 +902,10 @@ export default function FitApp() {
     } catch (error) {
       if (!silent) {
         setHealthSyncStatus('error');
-        setHealthSyncMessage(error instanceof Error ? error.message : 'Não foi possível ligar ao Health Connect.');
+        const message = error instanceof Error ? error.message : 'Não foi possível ligar ao Health Connect.';
+        setHealthSyncMessage(/not implemented|unimplemented|FitideHealth/i.test(message)
+          ? 'Esta instalação ainda não tem o leitor nativo. Instala o APK Fitide 3.3.2.'
+          : message);
       }
       return false;
     } finally {
@@ -4407,73 +4396,6 @@ function ProgressPage({
       </div>
     </div>
   );
-}
-
-function pickHealthValues(payload: string | undefined): number[] {
-  if (!payload) return [];
-  try {
-    const parsed: unknown = JSON.parse(payload);
-    const values: number[] = [];
-    const visit = (value: unknown) => {
-      if (Array.isArray(value)) {
-        value.forEach(visit);
-        return;
-      }
-      if (!value || typeof value !== 'object') return;
-      const record = value as Record<string, unknown>;
-      const numericList = ['values', 'Values', 'result', 'Result']
-        .map((candidate) => record[candidate])
-        .find((candidate) => Array.isArray(candidate) && candidate.some((item) => typeof item === 'number' || (typeof item === 'string' && Number.isFinite(Number(item.replace(',', '.'))))));
-      if (Array.isArray(numericList)) {
-        numericList.forEach((item) => {
-          if (typeof item === 'number') values.push(item);
-          else if (typeof item === 'string' && Number.isFinite(Number(item.replace(',', '.')))) values.push(Number(item.replace(',', '.')));
-        });
-        return;
-      }
-      const preferred = ['y', 'value', 'Value', 'sum', 'Sum', 'average', 'Average', 'total', 'Total'];
-      const key = preferred.find((candidate) => {
-        const candidateValue = record[candidate];
-        return typeof candidateValue === 'number'
-          || (typeof candidateValue === 'string' && candidateValue.trim() !== '' && Number.isFinite(Number(candidateValue.replace(',', '.'))));
-      });
-      if (key) {
-        const found = record[key];
-        values.push(typeof found === 'number' ? found : Number(String(found).replace(',', '.')));
-      }
-      else Object.values(record).forEach(visit);
-    };
-    if (typeof parsed === 'number') return [parsed];
-    visit(parsed);
-    return values;
-  } catch {
-    return [];
-  }
-}
-
-async function queryHealthMetric(variable: string, operation: 'SUM' | 'AVERAGE', start: Date, end: Date) {
-  const isoDate = (value: Date) => `${value.toISOString().split('.')[0]}Z`;
-  const result = await Promise.race([
-    HealthFitness.getData({
-      parameters: JSON.stringify({
-        Variable: variable,
-        StartDate: isoDate(start),
-        EndDate: isoDate(end),
-        TimeUnit: 'DAY',
-        OperationType: operation,
-        TimeUnitLength: 1,
-        AdvancedQueryReturnType: 'ALL_DATA',
-        AdvancedQueryResultType: 'RAW_DATA',
-      }),
-    }),
-    new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error(`Tempo excedido ao ler ${variable}.`)), 9000)),
-  ]);
-  const dataPoints = pickHealthValues(result.resultDataPoints);
-  const values = dataPoints.length ? dataPoints : pickHealthValues(result.results);
-  if (!values.length) return undefined;
-  return operation === 'SUM'
-    ? values.reduce((sum, value) => sum + value, 0)
-    : values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function HealthConnectPanel({
