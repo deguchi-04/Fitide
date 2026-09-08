@@ -628,6 +628,37 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 .workout-editor-catalog > div { display: grid; grid-template-columns: minmax(0,1fr) minmax(180px,.65fr); gap: 10px; align-items: end; }
 .workout-editor-catalog > div:last-child { grid-template-columns: minmax(0,1fr) auto; }
 .workout-editor-catalog button { min-height: 44px; }
+.workout-muscle-selection { border: 0; padding: 0; min-width: 0; }
+.workout-muscle-selection legend { font-size: 14px; font-weight: 650; }
+.workout-muscle-selection p, .workout-muscle-selection small { color: var(--muted-foreground); font-size: 14px; margin: 6px 0 12px; }
+.workout-muscle-selection .muscle-picker button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; }
+.exercise-catalog { display: grid; gap: 18px; min-width: 0; }
+.exercise-catalog-heading { display: grid; gap: 8px; }
+.exercise-catalog-heading > button { justify-self: start; }
+.exercise-catalog h3, .exercise-catalog h4, .exercise-catalog h5, .exercise-catalog p { margin: 0; }
+.exercise-catalog p { font-size: 14px; color: var(--muted-foreground); }
+.exercise-catalog-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.exercise-catalog-filters label { display: grid; gap: 6px; font-size: 14px; min-width: 0; }
+.exercise-catalog-filters label:first-child { grid-column: 1 / -1; }
+.exercise-catalog-filters select { width: 100%; min-width: 0; min-height: 44px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); }
+.exercise-catalog-group { display: grid; gap: 12px; }
+.exercise-catalog-group h4 { font-size: 18px; }
+.exercise-catalog-group h4 span { color: var(--muted-foreground); font-size: 14px; font-weight: 400; margin-left: 8px; }
+.exercise-catalog-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; align-items: start; }
+.exercise-catalog-card { min-width: 0; display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
+.exercise-catalog-card.is-previewing { border-color: var(--blue); }
+.exercise-catalog-card h5 { font-size: 16px; line-height: 1.4; overflow-wrap: anywhere; }
+.exercise-catalog-card > button { min-height: 44px; white-space: normal; height: auto; }
+.exercise-catalog-preview { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; min-height: 110px !important; border-radius: 12px; background: color-mix(in srgb,var(--blue) 10%,var(--card)); color: var(--foreground); font-size: 14px; cursor: pointer; }
+.exercise-catalog-preview svg { width: 32px; height: 32px; color: var(--blue); }
+.exercise-catalog-media { position: relative; display: grid; place-items: center; min-height: 180px; border-radius: 12px; overflow: hidden; background: var(--secondary); }
+.exercise-catalog-media img { display: block; width: 100%; max-height: 360px; object-fit: contain; background: white; }
+.exercise-catalog-media p { padding: 20px; text-align: center; }
+.exercise-catalog-loading { position: absolute; display: flex; align-items: center; gap: 8px; font-size: 14px; background: var(--card); padding: 8px; border-radius: 8px; }
+.exercise-catalog-added { font-size: 14px; color: var(--foreground); }
+@media (max-width: 520px) {
+  .exercise-catalog-grid, .exercise-catalog-filters { grid-template-columns: 1fr; }
+}
 .workout-editor-exercise { display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 12px; align-items: start; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--secondary); }
 .workout-editor-number { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; background: var(--card); color: var(--plum); font: 800 12px var(--font-geist-mono); }
 .workout-editor-main { min-width: 0; display: grid; gap: 10px; }

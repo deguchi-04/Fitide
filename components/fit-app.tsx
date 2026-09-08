@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { workoutGroups, exerciseGroups } from '@/lib/workout-groups';
+import { ExerciseCatalog } from '@/components/exercise-catalog';
 import { WidgetReorderButton } from '@/components/widget-reorder';
 import ReactCrop, { type PercentCrop, type PixelCrop } from 'react-image-crop';
 import {
@@ -5117,11 +5117,14 @@ function SettingsPage({
                 </button>
               </fieldset>
               {workoutCreationMode === 'fitide' && <div className="workout-method-options">
-                <Field label="Grupo muscular">
-                  <select value={bodyFocus[0] ?? 'biceps'} onChange={(event) => setBodyFocus([event.target.value])}>
-                    {muscleOptions.map((muscle) => <option value={muscle.value} key={muscle.value}>{muscle.label}</option>)}
-                  </select>
-                </Field>
+                <fieldset className="workout-muscle-selection">
+                  <legend>Grupos musculares</legend>
+                  <p>Seleciona um ou vários grupos para este treino.</p>
+                  <div className="muscle-picker">
+                    {muscleOptions.map((muscle) => <button type="button" key={muscle.value} aria-pressed={bodyFocus.includes(muscle.value)} className={bodyFocus.includes(muscle.value) ? 'selected' : ''} onClick={() => setBodyFocus((current) => current.includes(muscle.value) ? current.filter((value) => value !== muscle.value) : [...current, muscle.value])}>{bodyFocus.includes(muscle.value) && <Check size={16} />}{muscle.label}</button>)}
+                  </div>
+                  {!bodyFocus.length && <small>Escolhe pelo menos um grupo muscular.</small>}
+                </fieldset>
                 <Field label="Nível">
                   <select value={level} onChange={(event) => setLevel(event.target.value)}>
                     <option value="beginner">Iniciante</option><option value="intermediate">Intermédio</option><option value="advanced">Avançado</option>
@@ -5262,30 +5265,16 @@ function WorkoutPlanEditorDialog({
   onSave: (plan: WorkoutPlan) => void;
   onClose: () => void;
 }) {
-  const [equipmentFilter, setEquipmentFilter] = useState('all');
-  const [groupFilter, setGroupFilter] = useState('all');
-  const [exerciseSearch, setExerciseSearch] = useState('');
-  const equipmentChoices = useMemo(() => [...new Set(alternatives.map((exercise) => exercise.equipment).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-PT')), [alternatives]);
-  const filteredAlternatives = useMemo(() => {
-    const query = normalizeText(exerciseSearch);
-    return alternatives.filter((exercise) => {
-      if (groupFilter !== 'all' && !exerciseGroups(exercise).includes(groupFilter)) return false;
-      if (equipmentFilter !== 'all' && exercise.equipment !== equipmentFilter) return false;
-      if (!query) return true;
-      return normalizeText(`${exercise.name} ${exercise.target} ${exercise.equipment}`).includes(query);
-    });
-  }, [alternatives, equipmentFilter, exerciseSearch, groupFilter]);
-  const groupedAlternatives = workoutGroups.map((group) => ({
-    ...group,
-    exercises: filteredAlternatives.filter((exercise) =>
-      (groupFilter === 'all' ? exerciseGroups(exercise)[0] : groupFilter) === group.value),
-  })).filter((group) => group.exercises.length);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [replacementIndex, setReplacementIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    const close = (event: Event) => { event.preventDefault(); onClose(); };
+    const close = (event: Event) => { event.preventDefault(); if (catalogOpen) setCatalogOpen(false); else onClose(); };
     window.addEventListener('fitide-back', close);
-    return () => window.removeEventListener('fitide-back', close);
-  }, [onClose]);
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') close(event); };
+    window.addEventListener('keydown', escape);
+    return () => { window.removeEventListener('fitide-back', close); window.removeEventListener('keydown', escape); };
+  }, [onClose, catalogOpen]);
 
   function patchExercise(index: number, patch: Partial<WorkoutExercise>) {
     onChange({ ...plan, exercises: plan.exercises.map((exercise, exerciseIndex) => exerciseIndex === index ? { ...exercise, ...patch } : exercise) });
@@ -5326,10 +5315,10 @@ function WorkoutPlanEditorDialog({
         id: uid(),
         name: 'Novo exercício',
         target: 'Grupo muscular',
-        equipment: equipmentFilter === 'all' ? 'Outro' : equipmentFilter,
+        equipment: 'Outro',
         sets: 3,
         reps: '12',
-        weightKg: suggestedWorkoutWeight(level, equipmentFilter === 'all' ? 'Outro' : equipmentFilter),
+        weightKg: suggestedWorkoutWeight(level, 'Outro'),
         restSeconds: 60,
       }],
     });
@@ -5342,38 +5331,18 @@ function WorkoutPlanEditorDialog({
           <div><p className="eyebrow">{creating ? 'NOVO TREINO PERSONALIZADO' : 'ROTINA SEMANAL'}</p><h2 id="workout-editor-title">{creating ? 'Criar o meu treino' : `Editar ${plan.name}`}</h2><small>{plan.exercises.length} exercícios · {plan.time ?? 'Sem hora'}</small></div>
           <Button type="button" variant="ghost" size="icon" aria-label="Fechar editor" onClick={onClose}><X /></Button>
         </header>
-        <div className="workout-editor-list">
+        <div className="workout-editor-list" key={catalogOpen ? 'catalog' : 'plan'}>
+          {catalogOpen ? <ExerciseCatalog exercises={alternatives} loading={loadingAlternatives} replacing={replacementIndex !== null} onClose={() => setCatalogOpen(false)} onSelect={(id) => {
+            if (replacementIndex !== null) { replaceExercise(replacementIndex, id); setCatalogOpen(false); }
+            else addExercise(id);
+          }} /> : <>
           <section className="custom-workout-name">
             <Field label="Nome do treino"><Input value={plan.name} onChange={(event) => onChange({ ...plan, name: event.target.value })} placeholder="Ex.: Peito e tríceps" /></Field>
             {creating && <p>Escolhe livremente os exercícios. Podes editar séries, repetições, carga e descanso em cada um.</p>}
           </section>
           <section className="workout-editor-catalog" aria-label="Adicionar exercícios">
-            <Field label="Grupo muscular">
-              <select value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}>
-                <option value="all">Todos os grupos</option>
-                {workoutGroups.map((group) => <option key={group.value} value={group.value}>{group.label}</option>)}
-              </select>
-            </Field>
             <div>
-              <Field label="Procurar no catálogo">
-                <Input value={exerciseSearch} onChange={(event) => setExerciseSearch(event.target.value)} placeholder="Ex.: remada, peito, halteres…" />
-              </Field>
-              <Field label="Equipamento">
-                <select value={equipmentFilter} onChange={(event) => setEquipmentFilter(event.target.value)}>
-                  <option value="all">Todos os equipamentos</option>
-                  {equipmentChoices.map((equipment) => <option key={equipment} value={equipment}>{equipment}</option>)}
-                </select>
-              </Field>
-            </div>
-            <div>
-              <Field label={loadingAlternatives ? 'A carregar catálogo…' : `${filteredAlternatives.length} exercícios disponíveis`}>
-                <select value="" disabled={loadingAlternatives || !filteredAlternatives.length} onChange={(event) => addExercise(event.target.value)}>
-                  <option value="">Adicionar exercício do catálogo…</option>
-                  {groupedAlternatives.map((group) => <optgroup key={group.value} label={group.label}>
-                    {group.exercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name} · {exercise.equipment}</option>)}
-                  </optgroup>)}
-                </select>
-              </Field>
+              <Button type="button" onClick={() => { setReplacementIndex(null); setCatalogOpen(true); }}><BookOpen /> Abrir catálogo de exercícios</Button>
               <Button type="button" variant="outline" onClick={addManualExercise}><Plus /> Adicionar manualmente</Button>
             </div>
           </section>
@@ -5385,12 +5354,7 @@ function WorkoutPlanEditorDialog({
               <div className="workout-editor-number">{String(index + 1).padStart(2, '0')}</div>
               <div className="workout-editor-main">
                 <Field label="Exercício"><Input value={exercise.name} onChange={(event) => patchExercise(index, { name: event.target.value })} /></Field>
-                <Field label={loadingAlternatives ? 'A carregar alternativas…' : 'Substituir por exercício existente'}>
-                  <select value="" disabled={loadingAlternatives || !alternatives.length} onChange={(event) => replaceExercise(index, event.target.value)}>
-                    <option value="">Escolher substituição…</option>
-                    {filteredAlternatives.filter((item) => item.name !== exercise.name).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.target}</option>)}
-                  </select>
-                </Field>
+                <Button type="button" variant="outline" onClick={() => { setReplacementIndex(index); setCatalogOpen(true); }}><BookOpen /> Substituir pelo catálogo</Button>
                 <Field label="Equipamento"><Input value={exercise.equipment} onChange={(event) => patchExercise(index, { equipment: event.target.value })} /></Field>
                 <div className="workout-editor-values">
                   <Field label="Séries"><NumberInput value={exercise.sets} min={1} max={12} onChange={(sets) => patchExercise(index, { sets })} /></Field>
@@ -5402,6 +5366,7 @@ function WorkoutPlanEditorDialog({
               <Button type="button" variant="ghost" size="icon" aria-label={`Remover ${exercise.name}`} onClick={() => onChange({ ...plan, exercises: plan.exercises.filter((_, exerciseIndex) => exerciseIndex !== index) })}><Trash2 /></Button>
             </article>
           ))}
+          </>}
         </div>
         <footer><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button type="button" disabled={!plan.name.trim() || !plan.exercises.length} onClick={() => onSave(plan)}><Save /> {creating ? 'Criar e agendar treino' : 'Guardar treino'}</Button></footer>
       </section>

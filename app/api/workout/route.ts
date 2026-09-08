@@ -276,15 +276,21 @@ function catalogWorkout(focus: string[], level: string, equipment: string[] = []
       || item.bodyPart?.toLowerCase() === group);
     return inGroup && equipmentMatches(item.equipment ?? '');
   }).sort((a, b) => Number(b.difficulty === level) - Number(a.difficulty === level));
-  // Choose across equipment, then fill the session without restricting the editor catalog.
+  // Round-robin across selected groups so a multi-group session never collapses
+  // into exercises for whichever muscle happens to sort first in the catalog.
   const selected: typeof candidates = [];
-  for (const item of candidates) {
-    if (!selected.some((chosen) => chosen.equipment === item.equipment)) selected.push(item);
-    if (selected.length === 6) break;
-  }
-  for (const item of candidates) {
-    if (selected.length >= 6) break;
-    if (!selected.some((chosen) => chosen.id === item.id)) selected.push(item);
+  const limit = Math.max(6, focus.length);
+  while (selected.length < limit) {
+    let added = false;
+    for (const group of focus) {
+      const remaining = candidates.filter((item) =>
+        !selected.some((chosen) => chosen.id === item.id) &&
+        (exerciseGroups({ name: item.name, target: item.target ?? '' }).includes(group) || item.bodyPart?.toLowerCase() === group));
+      const item = remaining.find((candidate) => !selected.some((chosen) => chosen.equipment === candidate.equipment)) ?? remaining[0];
+      if (item) { selected.push(item); added = true; }
+      if (selected.length >= limit) break;
+    }
+    if (!added) break;
   }
   return selected.map((item, index) => asWorkoutExercise(item, index, level));
 }
