@@ -632,6 +632,11 @@ select:focus, input:focus { border-color: #9b758d; box-shadow: 0 0 0 3px rgba(10
 .workout-muscle-selection legend { font-size: 14px; font-weight: 650; }
 .workout-muscle-selection p, .workout-muscle-selection small { color: var(--muted-foreground); font-size: 14px; margin: 6px 0 12px; }
 .workout-muscle-selection .muscle-picker button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; }
+.ingredient-row > div { min-width: 0; }
+.ingredient-row strong { overflow-wrap: anywhere; }
+.ingredient-weight-edit { display: flex; align-items: center; gap: 7px; margin-top: 6px; }
+.ingredient-weight-edit .number-picker-trigger { width: 135px; max-width: 100%; min-height: 44px; }
+.ingredient-weight-edit > span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--muted-foreground); }
 .exercise-catalog { display: grid; gap: 18px; min-width: 0; }
 .exercise-catalog-heading { display: grid; gap: 8px; }
 .exercise-catalog-heading > button { justify-self: start; }

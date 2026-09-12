@@ -111,6 +111,7 @@ import {
 } from '@/lib/judo';
 import { foodCatalog, type FoodCatalogItem } from '@/lib/food-catalog';
 import { parseMealDescription } from '@/lib/meal-parser';
+import { updateIngredientWeight } from '@/lib/ingredient-weight';
 
 interface WorkoutTimerNativePlugin {
   start(options: { name: string; mode: 'interval' | 'free'; workSeconds: number; restSeconds: number; rounds: number }): Promise<void>;
@@ -3051,9 +3052,17 @@ function MealDialog({
               <div className="ingredient-row" key={item.id}>
                 <div>
                   <strong>{item.name}</strong>
-                  <small>
-                    {item.grams} g
-                  </small>
+                  <div className="ingredient-weight-edit">
+                    <NumberInput
+                      value={item.grams}
+                      min={0}
+                      max={Math.max(5000, item.grams)}
+                      decimalPlaces={1}
+                      ariaLabel={`Peso de ${item.name} (g)`}
+                      onChange={(grams) => setIngredients((current) => current.map((entry) => entry.id === item.id ? updateIngredientWeight(entry, grams) : entry))}
+                    />
+                    <span>g <Pencil size={14} aria-hidden="true" /></span>
+                  </div>
                 </div>
                 <span>{Math.round(item.calories)} kcal</span>
                 <Button
@@ -5441,6 +5450,7 @@ function NumberInput({
   unitOptions,
   onUnitChange,
   onConfirm,
+  decimalPlaces,
 }: {
   value: number | '';
   onChange: (value: number, unit?: QuantityMode) => void;
@@ -5452,6 +5462,7 @@ function NumberInput({
   unitOptions?: NumberUnitOption[];
   onUnitChange?: (unit: QuantityMode) => void;
   onConfirm?: (value: number, unit?: QuantityMode) => void;
+  decimalPlaces?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [draftUnit, setDraftUnit] = useState<QuantityMode>(unit ?? unitOptions?.[0]?.value ?? 'g');
@@ -5460,7 +5471,7 @@ function NumberInput({
   const effectiveMin = activeUnitOption?.min ?? min;
   const effectiveMax = activeUnitOption?.max ?? max;
   const increment = Number(effectiveStep);
-  const precision = effectiveStep.includes('.') ? effectiveStep.split('.')[1].length : 0;
+  const precision = decimalPlaces ?? (effectiveStep.includes('.') ? effectiveStep.split('.')[1].length : 0);
   const [customWheelValue, setCustomWheelValue] = useState<number | null>(null);
   const [wheelSyncToken, setWheelSyncToken] = useState(0);
   const options = useMemo(() => {
@@ -5505,7 +5516,7 @@ function NumberInput({
 
   const committedUnitOption = unitOptions?.find((option) => option.value === unit);
   const committedStep = committedUnitOption?.step ?? step;
-  const committedPrecision = committedStep.includes('.') ? committedStep.split('.')[1].length : 0;
+  const committedPrecision = decimalPlaces ?? (committedStep.includes('.') ? committedStep.split('.')[1].length : 0);
   const triggerSuffix = committedUnitOption?.suffix;
 
   useEffect(() => {
@@ -5565,7 +5576,7 @@ function NumberInput({
           const openingUnit = unit ?? unitOptions?.[0]?.value ?? 'g';
           const openingOption = unitOptions?.find((option) => option.value === openingUnit);
           const openingStep = openingOption?.step ?? step;
-          const openingPrecision = openingStep.includes('.') ? openingStep.split('.')[1].length : 0;
+          const openingPrecision = decimalPlaces ?? (openingStep.includes('.') ? openingStep.split('.')[1].length : 0);
           const openingValue = value === '' ? openingOption?.defaultValue ?? min : value;
           pendingWheelSync.current = openingValue;
           setDraftUnit(openingUnit);
