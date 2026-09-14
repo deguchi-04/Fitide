@@ -2064,6 +2064,7 @@ function MealDialog({
   const [grams, setGrams] = useState(100);
   const [quantityMode, setQuantityMode] = useState<QuantityMode>('g');
   const [manualName, setManualName] = useState('');
+  const mealScrollRef = useRef<HTMLDivElement>(null);
   const [saveToCatalog, setSaveToCatalog] = useState(false);
   const [editingFoodId, setEditingFoodId] = useState<string | null>(null);
   const [assistantText, setAssistantText] = useState('');
@@ -2252,6 +2253,13 @@ function MealDialog({
       setGrams(100);
       setSaveToCatalog(false);
       setEditingFoodId(null);
+      setMode('Catálogo');
+      setQuantityMode('g');
+      setFoodId('');
+      setFoodQuery('');
+      setLabelScanStatus('idle');
+      setLabelScanMessage('');
+      requestAnimationFrame(() => mealScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' }));
     }
   }
 
@@ -2374,7 +2382,7 @@ function MealDialog({
       setManual({ calories: '', protein: '', carbs: '', fat: '', fiber: '', calcium: '', iron: '', vitaminC: '', ...recognized });
       setLabelScanStatus('done');
       setLabelScanProgress(100);
-      setLabelScanMessage(`${entries.length} valores por 100 g preenchidos. Confere os valores e completa os campos em falta.`);
+      setLabelScanMessage(`${entries.length} valores por 100 g preenchidos. ${recognized.fiber === undefined ? 'Fibras não identificadas: confirma se aparecem no rótulo e preenche esse campo manualmente. ' : ''}Confere os valores antes de adicionar.`);
     } catch (error) {
       if (labelScanRun.current !== runId) return;
       setLabelScanStatus('error');
@@ -2502,7 +2510,7 @@ function MealDialog({
             <X />
           </Button>
         </header>
-        <div className="dialog-scroll">
+        <div className="dialog-scroll" ref={mealScrollRef}>
           <section className={`meal-assistant ${assistantOpen ? 'is-open' : 'is-collapsed'}`} aria-labelledby="meal-assistant-title">
             <button
               type="button"
@@ -2988,6 +2996,7 @@ function WorkoutPage({
     .filter((plan) => isScheduledForDate(plan, date, true))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'));
   const linkedActivityIds = new Set(duePlans.map((plan) => plan.activityId).filter(Boolean));
+  const nextPlan = duePlans.find(plan => !state.workoutSessions.some(session => session.date === date && (session.planId === plan.id || (!session.planId && session.planName === plan.name))));
   const dueActivities = state.activities.filter((activity) => isScheduledForDate(activity, date) && !linkedActivityIds.has(activity.id));
   const scheduleItems = [
     ...duePlans.map((plan) => ({ type: 'plan' as const, id: plan.id, time: plan.time, plan })),
@@ -3051,11 +3060,17 @@ function WorkoutPage({
     setState((current) => ({
       ...current,
       activeWorkout: undefined,
+      activityCheckIns: activePlan.activityId ? [
+        ...current.activityCheckIns.filter(checkIn => !(checkIn.activityId === activePlan.activityId && checkIn.date === (current.activeWorkout?.date ?? date))),
+        { activityId: activePlan.activityId, date: current.activeWorkout?.date ?? date, status: 'completed' as const },
+      ] : current.activityCheckIns,
       workoutSessions: [
         ...current.workoutSessions,
         {
           id: uid(),
           date: current.activeWorkout?.date ?? date,
+          planId: activePlan.id,
+          activityId: activePlan.activityId,
           planName: activePlan.name,
           minutes,
           completedSets: completedSets.length,
@@ -3202,8 +3217,8 @@ function WorkoutPage({
           <Button variant="outline" size="lg" onClick={onGoJudo}>
             <BookOpen /> Área de judô
           </Button>
-          {duePlans[0] && (
-            <Button size="lg" onClick={() => startWorkout(duePlans[0])}>
+          {nextPlan && (
+            <Button size="lg" onClick={() => startWorkout(nextPlan)}>
               <CirclePlay /> Começar treino
             </Button>
           )}
@@ -3213,9 +3228,9 @@ function WorkoutPage({
           <TrainingTimer state={state} setState={setState} />
           {scheduleItems.length ? (
             scheduleItems.map((item) => item.type === 'plan' ? (
-              <PlanCard key={`plan-${item.id}`} plan={item.plan} onStart={() => startWorkout(item.plan)} />
+              <PlanCard key={`plan-${item.id}`} plan={item.plan} completed={state.workoutSessions.some(session => session.date === date && (session.planId === item.id || (!session.planId && session.planName === item.plan.name)))} onStart={() => startWorkout(item.plan)} />
             ) : (
-              <ActivityScheduleCard key={`activity-${item.id}`} activity={item.activity} onOpenJudo={normalizeText(item.activity.name).includes('judo') ? onGoJudo : undefined} />
+              <ActivityScheduleCard key={`activity-${item.id}`} activity={item.activity} completed={state.activityCheckIns.some(checkIn => checkIn.activityId === item.id && checkIn.date === date && checkIn.status === 'completed')} onOpenJudo={normalizeText(item.activity.name).includes('judo') ? onGoJudo : undefined} />
             ))
           ) : (
             <Card className="panel plan-empty">
@@ -3230,9 +3245,8 @@ function WorkoutPage({
           )}
           {state.workoutSessions.length > 0 && (
             <Card className="panel history-card">
-              <CardHeader>
-                <CardTitle>Últimos treinos</CardTitle>
-              </CardHeader>
+              <details>
+              <summary className="workout-history-toggle">Últimos treinos <ChevronDown size={18} /></summary>
               <CardContent>
                 {state.workoutSessions
                   .slice(-4)
@@ -3253,6 +3267,7 @@ function WorkoutPage({
                     </div>
                   ))}
               </CardContent>
+              </details>
             </Card>
           )}
       </div>
@@ -3263,9 +3278,11 @@ function WorkoutPage({
 function ActivityScheduleCard({
   activity,
   onOpenJudo,
+  completed,
 }: {
   activity: Activity;
   onOpenJudo?: () => void;
+  completed?: boolean;
 }) {
   return (
     <Card className="panel scheduled-activity-card">
@@ -3273,6 +3290,7 @@ function ActivityScheduleCard({
         <div>
           <p className="eyebrow">{activity.specificDate ? 'ATIVIDADE PONTUAL' : 'ATIVIDADE SEMANAL'}</p>
           <CardTitle>{activity.name}</CardTitle>
+          {completed && <span className="workout-done"><Check size={16} /> Concluído</span>}
         </div>
         <span className="time-badge">{activity.time ?? 'Sem hora'}</span>
       </CardHeader>
@@ -3291,10 +3309,12 @@ function PlanCard({
   plan,
   onStart,
   onDelete,
+  completed,
 }: {
   plan: WorkoutPlan;
   onStart: () => void;
   onDelete?: () => void;
+  completed?: boolean;
 }) {
   const [demoExercise, setDemoExercise] = useState<WorkoutExercise | null>(null);
   return (
@@ -3304,6 +3324,7 @@ function PlanCard({
         <div>
           <p className="eyebrow">ROTINA SUGERIDA</p>
           <CardTitle>{plan.name}</CardTitle>
+          {completed && <span className="workout-done"><Check size={16} /> Concluído neste dia</span>}
         </div>
         <div className="plan-actions">
           {plan.time && <span className="time-badge">{plan.time}</span>}
@@ -3336,7 +3357,7 @@ function PlanCard({
           ))}
         </div>
         <Button size="lg" className="wide-button" onClick={onStart}>
-          <CirclePlay /> Começar este treino
+          <CirclePlay /> {completed ? 'Repetir treino' : 'Começar este treino'}
         </Button>
       </CardContent>
     </Card>
@@ -3775,6 +3796,16 @@ function CalendarPage({
   });
   const [monthSlide, setMonthSlide] = useState<{ to: Date; direction: -1 | 1 } | null>(null);
   const calendarSwipeStart = useRef<{ x: number; y: number } | null>(null);
+  const daySwipeStart = useRef<{ x: number; y: number } | null>(null);
+  const daySwipedAt = useRef(0);
+  function changeDay(delta: number) {
+    const next = new Date(`${selectedDate}T12:00:00`);
+    next.setDate(next.getDate() + delta);
+    setSelectedDate(localDateKey(next));
+    if (monthSlideTimer.current !== null) window.clearTimeout(monthSlideTimer.current);
+    setMonthSlide(null);
+    setMonth(new Date(next.getFullYear(), next.getMonth(), 1));
+  }
   const monthSlideTimer = useRef<number | null>(null);
   useEffect(() => () => {
     if (monthSlideTimer.current !== null) window.clearTimeout(monthSlideTimer.current);
@@ -3805,9 +3836,13 @@ function CalendarPage({
   );
   const water =
     state.water.find((entry) => entry.date === selectedDate)?.liters ?? 0;
-  const workout = state.workoutSessions.find(
+  const workouts = state.workoutSessions.filter(
     (entry) => entry.date === selectedDate,
   );
+  const judoPractices = state.judoPractices.filter(entry => entry.date === selectedDate);
+  const activityRecords = state.activityCheckIns.filter(entry => entry.date === selectedDate)
+    .map(checkIn => ({ ...checkIn, activity: state.activities.find(activity => activity.id === checkIn.activityId) }))
+    .filter(entry => entry.activity && !workouts.some(workout => workout.activityId === entry.activityId));
   const fast = state.fasts.find(
     (entry) => localDateKey(new Date(entry.start)) === selectedDate,
   );
@@ -3911,15 +3946,34 @@ function CalendarPage({
             </div>
           </CardContent>
         </Card>
-        <Card className="panel day-detail">
+        <Card className="panel day-detail calendar-interactive"
+          onTouchStart={event => { event.stopPropagation(); const touch = event.touches.length === 1 ? event.touches[0] : null; daySwipeStart.current = touch ? {x:touch.clientX,y:touch.clientY} : null; }}
+          onTouchMove={event => event.stopPropagation()}
+          onTouchCancel={() => { daySwipeStart.current = null; }}
+          onTouchEnd={event => {
+            event.stopPropagation();
+            const start = daySwipeStart.current;
+            daySwipeStart.current = null;
+            const touch = event.changedTouches[0];
+            if (!start || !touch) return;
+            const dx = touch.clientX - start.x, dy = touch.clientY - start.y;
+            if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.4) { daySwipedAt.current = Date.now(); changeDay(dx < 0 ? 1 : -1); }
+          }}
+          onClickCapture={event => { if (Date.now() - daySwipedAt.current < 400) { event.preventDefault(); event.stopPropagation(); } }}
+        >
           <CardHeader>
             <p className="eyebrow">DIA SELECIONADO</p>
+            <div className="calendar-day-navigation">
+            <Button variant="ghost" size="icon" aria-label="Dia anterior" onClick={() => changeDay(-1)}><ChevronLeft /></Button>
             <CardTitle>
               {new Date(`${selectedDate}T12:00:00`).toLocaleDateString(
                 'pt-PT',
                 { weekday: 'long', day: 'numeric', month: 'long' },
               )}
             </CardTitle>
+            <Button variant="ghost" size="icon" aria-label="Dia seguinte" onClick={() => changeDay(1)}><ChevronRight /></Button>
+            </div>
+            <small>Desliza neste cartão para mudar de dia.</small>
           </CardHeader>
           <CardContent>
             <div className="day-stats">
@@ -3944,9 +3998,20 @@ function CalendarPage({
               />
               <MiniStat
                 label="Treino"
-                value={workout ? `${workout.minutes} min` : '—'}
+                value={workouts.length ? `${workouts.reduce((sum, workout) => sum + workout.minutes, 0)} min registados` : judoPractices.length ? `${judoPractices.reduce((sum, practice) => sum + practice.durationMinutes, 0)} min de judô` : activityRecords.some(entry => entry.status === 'completed') ? 'Presença confirmada' : '—'}
               />
+              <MiniStat label="Proteína" value={`${nutrients.protein} g`} />
+              <MiniStat label="Hidratos" value={`${nutrients.carbs} g`} />
+              <MiniStat label="Gordura" value={`${nutrients.fat} g`} />
+              <MiniStat label="Fibras" value={`${nutrients.fiber} g`} />
             </div>
+            <section className="calendar-training-detail" aria-label="Treinos deste dia">
+              <strong>Treinos deste dia</strong>
+              {workouts.map(workout => <div key={workout.id} className="calendar-training-row"><span className="workout-done"><Check size={16} /> {workout.planName}</span><small>{workout.minutes} min · {workout.completedSets} séries · {workout.calories} kcal estimadas</small></div>)}
+              {activityRecords.map(entry => <div key={entry.activityId} className="calendar-training-row"><span>{entry.activity!.name} · {entry.status === 'completed' ? 'Concluído' : 'Não fui'}</span><small>{entry.activity!.minutes} min agendados</small></div>)}
+              {judoPractices.map(practice => <div key={practice.id} className="calendar-training-row"><span>Registo de judô · {practice.durationMinutes} min</span><small>{practice.uchikomiReps} uchikomi · {practice.randoriRounds} rondas de randori</small>{practice.notes && <small>{practice.notes}</small>}</div>)}
+              {!workouts.length && !activityRecords.length && !judoPractices.length && <p>Sem treinos registados.</p>}
+            </section>
             <div className="day-meals">
               <strong>Refeições</strong>
               {dayMeals.length ? (

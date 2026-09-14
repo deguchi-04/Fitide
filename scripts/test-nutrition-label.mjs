@@ -12,4 +12,7 @@ assert.throws(() => readNutritionLabel('Por porção 20 g Proteínas 5 g'), /mis
 assert.throws(() => readNutritionLabel('Por 1000 g Proteínas 5 g'), /missing-per-100/);
 assert.equal(readNutritionLabel('Por 100ml Energia 322 kcal Lípidos <0,5 g Hidratos de carbono 78 g Proteínas 1,7 g').basis, 'ml');
 assert.equal(readNutritionLabel(samples[2][0]).values.fiber, undefined);
-console.log('Nutrition parser: 8 regression checks passed.');
+assert.equal(readNutritionLabel('Por 100g FIBRA ALIMENTAR1, 3g Proteínas 5g').values.fiber, 1.3);
+assert.equal(readNutritionLabel('Por 100g F1BRAS ALIMENTARES\n3,4\nProteínas 5g').values.fiber, 3.4);
+assert.equal(readNutritionLabel('Por 100g Fibras 0g Proteínas 5g').values.fiber, 0);
+console.log('Nutrition parser: 11 regression checks passed.');

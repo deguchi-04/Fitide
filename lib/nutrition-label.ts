@@ -1,6 +1,10 @@
 // Interpret only an explicitly labelled 100 g/ml column, never serving values.
 export function readNutritionLabel(text: string) {
-  const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/\bf[1l]br([ae]s?)\b/g, 'fibr$1')
+    .replace(/([a-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-z])/g, '$1 $2')
+    .replace(/(\d)\s*([.,])\s*(\d)/g, '$1$2$3');
   const reference = /\b100\s*(g|gr|gramas|ml)\b/.exec(normalized);
   if (!reference) throw new Error('missing-per-100');
   const before = normalized.slice(0, reference.index);
@@ -20,7 +24,7 @@ export function readNutritionLabel(text: string) {
     // For multilingual labels only the final alias has numbers after it.
     const value = key === 'calories'
       ? /(\d+(?:[.,]\d+)?)\s*k\s*c\s*a\s*l/.exec(segment)
-      : /(?:<\s*)?(\d+(?:[.,]\d+)?)\s*(?:g\b|$)/.exec(segment.trim());
+      : /(?:<\s*)?(\d+(?:[.,]\d+)?)\s*(?:g\b|gr\b|(?=[;\n])|$)/.exec(segment.trim());
     if (!value) continue;
     const number = Number(value[1].replace(',', '.'));
     if (number >= 0 && number <= (key === 'calories' ? 1000 : 100)) result[key] = number;

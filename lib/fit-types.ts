@@ -120,6 +120,8 @@ export interface WorkoutPlan {
 
 export interface WorkoutSession {
   id: string;
+  planId?: string;
+  activityId?: string;
   date: string;
   planName: string;
   minutes: number;
