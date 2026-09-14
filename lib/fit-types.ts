@@ -181,6 +181,14 @@ export interface HealthSnapshot {
 }
 
 export interface AppState {
+  activeWorkout?: {
+    plan: WorkoutPlan;
+    date: string;
+    startedAt: number;
+    restEndAt: number;
+    completedSets: string[];
+    setValues: Record<string, { load: number | ''; reps: number | '' }>;
+  };
   theme: 'light' | 'dark';
   profile: Profile;
   goals: Goals;

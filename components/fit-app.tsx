@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ExerciseCatalog } from '@/components/exercise-catalog';
+import { LabelCamera } from '@/components/label-camera';
+import { readNutritionLabel } from '@/lib/nutrition-label';
 import { WidgetReorderButton } from '@/components/widget-reorder';
 import ReactCrop, { type PercentCrop, type PixelCrop } from 'react-image-crop';
 import {
@@ -59,7 +61,6 @@ import {
 } from 'recharts';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
-import { Camera as CapacitorCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { HealthFitness } from '@capacitor/health-fitness';
 import { Button } from '@/components/ui/button';
 import {
@@ -142,6 +143,7 @@ interface NativeLabelPhotoResult {
 }
 
 const NativeWorkoutTimer = registerPlugin<WorkoutTimerNativePlugin>('WorkoutTimer');
+const NativeNutritionReader = registerPlugin<{ recognize(options: { image: string }): Promise<{ text: string }> }>('NutritionReader');
 const NativeFitideHealth = registerPlugin<FitideHealthNativePlugin>('FitideHealth');
 
 type Page =
@@ -525,91 +527,6 @@ function formatFastDuration(totalSeconds: number) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-const labelFieldAliases: Partial<Record<keyof Nutrients, string[]>> = {
-  protein: ['proteina', 'proteinas', 'protein', 'proteines'],
-  carbs: ['hidratos de carbono', 'hidratos', 'h carbono', 'de carbono', 'carboidratos', 'carboidrato', 'carbohydrate', 'carbohydrates', 'glucides'],
-  fat: ['lipidos', 'lipido', 'gorduras totais', 'gordura total', 'gordura', 'grasas', 'grasa', 'fat', 'matieres grasses'],
-  fiber: ['fibra alimentar', 'fibras alimentares', 'fibra', 'fiber', 'fibre', 'fibres alimentaires'],
-  calcium: ['calcio', 'calcium'],
-  iron: ['ferro', 'iron'],
-  vitaminC: ['vitamina c', 'vitamin c'],
-};
-
-function parseLabelNumber(value: string) {
-  const number = Number(value.replace(',', '.'));
-  return Number.isFinite(number) ? number : undefined;
-}
-
-function numericValues(value: string) {
-  return [...value.matchAll(/\b(\d{1,5}(?:[.,]\d{1,3})?)\b/g)]
-    .map((match) => parseLabelNumber(match[1]))
-    .filter((number): number is number => number !== undefined);
-}
-
-function hasPer100Reference(text: string) {
-  const normalized = normalizeText(text);
-  return /(?:por|per|pour|cada)?\s*1000?\s*(?:g|gr|gramas|ml)\b/.test(normalized);
-}
-
-function labelLineMatchesAlias(normalizedLine: string, aliases: string[]) {
-  const words = normalizedLine.split(' ');
-  return aliases.some((alias) => {
-    if (normalizedLine.includes(alias)) return true;
-    if (alias.includes(' ')) return false;
-    return words.some((word) => word.length >= 4 && Math.abs(word.length - alias.length) <= 1 && editDistance(word, alias) <= 1);
-  });
-}
-
-function parseNutritionLabel(text: string): Partial<Record<keyof Nutrients, number>> {
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const result: Partial<Record<keyof Nutrients, number>> = {};
-  const nutrientMaximums: Partial<Record<keyof Nutrients, number>> = {
-    protein: 100,
-    carbs: 100,
-    fat: 100,
-    fiber: 100,
-    calcium: 5000,
-    iron: 500,
-    vitaminC: 5000,
-  };
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const normalized = normalizeText(line);
-    const candidate = `${line} ${lines[index + 1] ?? ''}`;
-
-    if (result.calories === undefined && (normalized.includes('valor energetico') || normalized.includes('energia') || normalized.includes('energy'))) {
-      const kcalMatches = [...candidate.matchAll(/(\d{1,5}(?:[.,]\d{1,3})?)\s*kcal/gi)];
-      const kcal = kcalMatches.length ? parseLabelNumber(kcalMatches[0][1]) : undefined;
-      const fallbackValues = numericValues(candidate);
-      result.calories = kcal ?? (fallbackValues.length > 1 ? fallbackValues[1] : fallbackValues[0]);
-    }
-
-    for (const [key, aliases] of Object.entries(labelFieldAliases) as Array<[keyof Nutrients, string[]]>) {
-      if (result[key] !== undefined || !labelLineMatchesAlias(normalized, aliases)) continue;
-      if (key === 'fat' && /(saturad|trans)/.test(normalized)) continue;
-      if (key === 'carbs' && /(acucar|sugar)/.test(normalized)) continue;
-      const values = numericValues(candidate);
-      const value = values.find((item) => item <= (nutrientMaximums[key] ?? Number.POSITIVE_INFINITY));
-      if (value !== undefined) result[key] = value;
-    }
-  }
-
-  if (result.calories === undefined) {
-    const kcal = [...text.matchAll(/(\d{1,4}(?:[.,]\d{1,2})?)\s*k\s*c\s*a\s*l/gi)]
-      .map((match) => parseLabelNumber(match[1]))
-      .find((value) => value !== undefined && value > 0 && value <= 1000);
-    if (kcal !== undefined) result.calories = kcal;
-  }
-
-  if (result.calories !== undefined && result.protein !== undefined && result.carbs !== undefined && result.fat !== undefined) {
-    const calculatedCalories = (result.protein * 4) + (result.carbs * 4) + (result.fat * 9) + ((result.fiber ?? 0) * 2);
-    const difference = Math.abs(result.calories - calculatedCalories);
-    if (calculatedCalories >= 10 && difference > Math.max(35, calculatedCalories * 0.45)) delete result.calories;
-  }
-
-  return result;
-}
 
 async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
   const scaleX = image.naturalWidth / image.width;
@@ -618,7 +535,7 @@ async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
   const sourceY = Math.max(0, Math.round(crop.y * scaleY));
   const sourceWidth = Math.min(image.naturalWidth - sourceX, Math.max(1, Math.round(crop.width * scaleX)));
   const sourceHeight = Math.min(image.naturalHeight - sourceY, Math.max(1, Math.round(crop.height * scaleY)));
-  const outputScale = Math.min(1.1, 720 / sourceWidth, 1000 / sourceHeight);
+  const outputScale = Math.min(1.5, 1600 / sourceWidth, 1600 / sourceHeight);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sourceWidth * outputScale));
   canvas.height = Math.max(1, Math.round(sourceHeight * outputScale));
@@ -640,80 +557,6 @@ async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
     canvas.width,
     canvas.height,
   );
-  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-  const pixels = imageData.data;
-  const histogram = new Uint32Array(256);
-  let luminanceSum = 0;
-  for (let index = 0; index < pixels.length; index += 4) {
-    const luminance = Math.round((pixels[index] * 0.299) + (pixels[index + 1] * 0.587) + (pixels[index + 2] * 0.114));
-    histogram[luminance] += 1;
-    luminanceSum += luminance;
-  }
-  const pixelCount = canvas.width * canvas.height;
-  let backgroundWeight = 0;
-  let backgroundSum = 0;
-  let bestVariance = 0;
-  let threshold = 150;
-  for (let level = 0; level < 256; level += 1) {
-    backgroundWeight += histogram[level];
-    if (!backgroundWeight) continue;
-    const foregroundWeight = pixelCount - backgroundWeight;
-    if (!foregroundWeight) break;
-    backgroundSum += level * histogram[level];
-    const backgroundMean = backgroundSum / backgroundWeight;
-    const foregroundMean = (luminanceSum - backgroundSum) / foregroundWeight;
-    const variance = backgroundWeight * foregroundWeight * ((backgroundMean - foregroundMean) ** 2);
-    if (variance > bestVariance) {
-      bestVariance = variance;
-      threshold = level;
-    }
-  }
-  let darkPixelCount = 0;
-  for (let index = 0; index < pixels.length; index += 4) {
-    const value = pixels[index] < threshold ? 0 : 255;
-    if (value === 0) darkPixelCount += 1;
-    pixels[index] = value;
-    pixels[index + 1] = value;
-    pixels[index + 2] = value;
-    pixels[index + 3] = 255;
-  }
-  if (darkPixelCount / pixelCount > 0.55) {
-    for (let index = 0; index < pixels.length; index += 4) {
-      const value = pixels[index] === 0 ? 255 : 0;
-      pixels[index] = value;
-      pixels[index + 1] = value;
-      pixels[index + 2] = value;
-    }
-  }
-  const clearPixel = (x: number, y: number) => {
-    const index = ((y * canvas.width) + x) * 4;
-    pixels[index] = 255;
-    pixels[index + 1] = 255;
-    pixels[index + 2] = 255;
-  };
-  for (let y = 0; y < canvas.height; y += 1) {
-    let darkPixels = 0;
-    for (let x = 0; x < canvas.width; x += 1) {
-      if (pixels[((y * canvas.width) + x) * 4] === 0) darkPixels += 1;
-    }
-    if (darkPixels / canvas.width > 0.48) {
-      for (let lineY = Math.max(0, y - 2); lineY <= Math.min(canvas.height - 1, y + 2); lineY += 1) {
-        for (let x = 0; x < canvas.width; x += 1) clearPixel(x, lineY);
-      }
-    }
-  }
-  for (let x = 0; x < canvas.width; x += 1) {
-    let darkPixels = 0;
-    for (let y = 0; y < canvas.height; y += 1) {
-      if (pixels[((y * canvas.width) + x) * 4] === 0) darkPixels += 1;
-    }
-    if (darkPixels / canvas.height > 0.48) {
-      for (let lineX = Math.max(0, x - 2); lineX <= Math.min(canvas.width - 1, x + 2); lineX += 1) {
-        for (let y = 0; y < canvas.height; y += 1) clearPixel(lineX, y);
-      }
-    }
-  }
-  context.putImageData(imageData, 0, 0);
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('crop-failed'))), 'image/jpeg', 0.9);
   });
@@ -723,10 +566,11 @@ async function prepareNutritionCrop(image: HTMLImageElement, crop: PixelCrop) {
 }
 
 async function prepareNutritionPreview(file: File) {
+  if (file.size > 25 * 1024 * 1024) throw new Error('image-too-large');
   if (typeof createImageBitmap !== 'function') return file;
   const bitmap = await createImageBitmap(file, {
     imageOrientation: 'from-image',
-    resizeWidth: 960,
+    resizeWidth: 1200,
     resizeQuality: 'high',
   });
   try {
@@ -841,6 +685,7 @@ function mergeState(saved: Partial<AppState>): AppState {
 
 export default function FitApp() {
   const [state, setState] = useState<AppState>(defaultState);
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
   const [page, setPage] = useState<Page>('today');
   const [selectedDate, setSelectedDate] = useState(localDateKey());
   const [loaded, setLoaded] = useState(false);
@@ -942,7 +787,11 @@ export default function FitApp() {
         (response) => response.json() as Promise<{ state: AppState | null }>,
       )
       .then(({ state: saved }) => {
-        if (saved) setState(mergeState(saved));
+        if (saved) {
+          let pending: { activeWorkout?: AppState['activeWorkout'] } | null = null;
+          try { pending = JSON.parse(localStorage.getItem('fitide-workout-pending') ?? 'null'); } catch { /* Server remains authoritative when cache is unavailable. */ }
+          setState(mergeState(pending ? { ...saved, activeWorkout: pending.activeWorkout } : saved));
+        }
         setSync('saved');
       })
       .catch(() => setSync('error'))
@@ -1013,15 +862,20 @@ export default function FitApp() {
   useEffect(() => {
     if (!loaded) return;
     setSync('saving');
+    const workoutDraft = JSON.stringify({ activeWorkout: state.activeWorkout });
+    try { localStorage.setItem('fitide-workout-pending', workoutDraft); } catch { /* Remote save still runs. */ }
     const timer = window.setTimeout(() => {
-      fetch('/api/state', {
+      saveQueue.current = saveQueue.current.catch(() => undefined).then(() => fetch('/api/state', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(state),
-      })
+      }))
         .then((response) => {
           if (!response.ok) throw new Error('sync');
           setSync('saved');
+          try {
+            if (localStorage.getItem('fitide-workout-pending') === workoutDraft) localStorage.removeItem('fitide-workout-pending');
+          } catch { /* Optional recovery cache. */ }
         })
         .catch(() => setSync('error'));
     }, 550);
@@ -2217,6 +2071,7 @@ function MealDialog({
   const [assistantMessage, setAssistantMessage] = useState('');
   const [assistantOpen, setAssistantOpen] = useState(false);
   const labelPhotoInput = useRef<HTMLInputElement>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const labelCropImage = useRef<HTMLImageElement>(null);
   const labelWorker = useRef<{ terminate: () => Promise<unknown> } | null>(null);
   const labelScanRun = useRef(0);
@@ -2472,32 +2327,6 @@ function MealDialog({
     onRestoredLabelPhotoConsumed();
   }, [restoredLabelPhoto]);
 
-  async function takeNativeLabelPhoto() {
-    setLabelScanStatus('reading');
-    setLabelScanProgress(0);
-    setLabelScanMessage('A abrir a câmara…');
-    try {
-      const photo = await CapacitorCamera.getPhoto({
-        quality: 65,
-        width: 900,
-        height: 1200,
-        correctOrientation: true,
-        saveToGallery: false,
-        allowEditing: false,
-        resultType: CameraResultType.Uri,
-        source: CameraSource.Camera,
-      });
-      openNativeLabelCrop(photo);
-    } catch (error) {
-      if (error instanceof Error && /cancel/i.test(error.message)) {
-        setLabelScanStatus('idle');
-        setLabelScanMessage('Fotografia cancelada.');
-        return;
-      }
-      setLabelScanStatus('error');
-      setLabelScanMessage('A câmara não conseguiu devolver a foto. Tenta novamente.');
-    }
-  }
 
   async function scanNutritionLabel(image: Blob) {
     const runId = labelScanRun.current + 1;
@@ -2507,6 +2336,16 @@ function MealDialog({
     setLabelScanMessage('A preparar a leitura…');
     let worker: Awaited<ReturnType<(typeof import('tesseract.js'))['createWorker']>> | undefined;
     try {
+      let text: string;
+      if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('NutritionReader')) {
+        const encoded = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(',')[1]);
+          reader.onerror = () => reject(new Error('image-read'));
+          reader.readAsDataURL(image);
+        });
+        text = (await NativeNutritionReader.recognize({ image: encoded })).text;
+      } else {
       const { createWorker, PSM } = await import('tesseract.js');
       worker = await createWorker('por', undefined, {
         logger: ({ status, progress }: { status: string; progress: number }) => {
@@ -2524,23 +2363,27 @@ function MealDialog({
         user_defined_dpi: '300',
       });
       const { data } = await worker.recognize(image);
+      text = data.text;
+      }
       if (labelScanRun.current !== runId) return;
-      if (!hasPer100Reference(data.text)) throw new Error('missing-per-100');
-      const recognized = parseNutritionLabel(data.text);
+      const { values: recognized, basis } = readNutritionLabel(text);
+      if (basis === 'ml') throw new Error('per-100ml');
       const entries = Object.entries(recognized) as Array<[keyof Nutrients, number]>;
       const macroEntries = entries.filter(([key]) => ['protein', 'carbs', 'fat', 'fiber'].includes(key));
-      if (macroEntries.length < 3) throw new Error('no-values');
-      setManual((current) => ({ ...current, ...recognized }));
+      if (macroEntries.length === 0) throw new Error('no-values');
+      setManual({ calories: '', protein: '', carbs: '', fat: '', fiber: '', calcium: '', iron: '', vitaminC: '', ...recognized });
       setLabelScanStatus('done');
       setLabelScanProgress(100);
-      setLabelScanMessage(`${entries.length} valores por 100 g/ml preenchidos. A coluna por porção foi ignorada.`);
+      setLabelScanMessage(`${entries.length} valores por 100 g preenchidos. Confere os valores e completa os campos em falta.`);
     } catch (error) {
       if (labelScanRun.current !== runId) return;
       setLabelScanStatus('error');
       setLabelScanMessage(
-        error instanceof Error && error.message === 'missing-per-100'
+        error instanceof Error && error.message === 'per-100ml'
+          ? 'Este rótulo tem valores por 100 ml, não por 100 g. Não preenchi automaticamente: é necessária a densidade do produto para converter para gramas.'
+          : error instanceof Error && error.message === 'missing-per-100'
           ? 'Não consegui confirmar a referência por 100 g/ml. Inclui esse cabeçalho no recorte e exclui a coluna por porção.'
-          : 'Não consegui ler pelo menos 3 valores por 100 g/ml. Aproxima a câmara e recorta apenas essa informação.',
+          : 'Não consegui ler os valores por 100 g/ml. Aproxima a câmara e recorta apenas essa informação.',
       );
     } finally {
       await worker?.terminate().catch(() => undefined);
@@ -2875,7 +2718,6 @@ function MealDialog({
                   className="label-photo-input"
                   type="file"
                   accept="image/*"
-                  capture="environment"
                   onChange={(event) => {
                     const file = event.target.files?.[0];
                     if (file) void openLabelCrop(file);
@@ -2886,13 +2728,14 @@ function MealDialog({
                   variant="outline"
                   disabled={labelScanStatus === 'reading'}
                   onClick={() => {
-                    if (Capacitor.isNativePlatform()) void takeNativeLabelPhoto();
-                    else labelPhotoInput.current?.click();
+                    setCameraOpen(true);
                   }}
                 >
                   {labelScanStatus === 'reading' ? <LoaderCircle className="spin" /> : <Camera />}
                   {labelScanStatus === 'reading' ? 'A analisar…' : labelScanStatus === 'done' ? 'Ler outro rótulo' : 'Fotografar rótulo'}
                 </Button>
+                <Button type="button" variant="ghost" disabled={labelScanStatus === 'reading'} onClick={() => labelPhotoInput.current?.click()}>Escolher da galeria</Button>
+                {cameraOpen && <LabelCamera onClose={() => setCameraOpen(false)} onPhoto={file => { setCameraOpen(false); void openLabelCrop(file); }} />}
                 {labelScanStatus === 'reading' && <Progress value={labelScanProgress} />}
                 {labelScanMessage && <small className="label-scan-message">{labelScanMessage}</small>}
               </section>
@@ -3125,13 +2968,22 @@ function WorkoutPage({
   date: string;
   onGoJudo: () => void;
 }) {
-  const [activePlan, setActivePlan] = useState<WorkoutPlan | null>(null);
-  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const activePlan = state.activeWorkout?.plan ?? null;
+  const startedAt = state.activeWorkout?.startedAt ?? null;
+  const completedSets = state.activeWorkout?.completedSets ?? [];
+  const setValues = state.activeWorkout?.setValues ?? {};
+  const restEndAt = state.activeWorkout?.restEndAt ?? 0;
+  const [minimized, setMinimized] = useState(false);
+  function updateWorkout(patch: Partial<NonNullable<AppState['activeWorkout']>>) {
+    setState(current => current.activeWorkout ? { ...current, activeWorkout: { ...current.activeWorkout, ...patch } } : current);
+  }
+  function setCompletedSets(completedSets: string[]) { updateWorkout({ completedSets }); }
+  function setSetValues(update: (values: NonNullable<AppState['activeWorkout']>['setValues']) => NonNullable<AppState['activeWorkout']>['setValues']) {
+    setState(current => current.activeWorkout ? { ...current, activeWorkout: { ...current.activeWorkout, setValues: update(current.activeWorkout.setValues) } } : current);
+  }
   const [elapsed, setElapsed] = useState(0);
-  const [completedSets, setCompletedSets] = useState<string[]>([]);
   const [rest, setRest] = useState(0);
   const [demoExercise, setDemoExercise] = useState<WorkoutExercise | null>(null);
-  const [setValues, setSetValues] = useState<Record<string, { load: number | ''; reps: number | '' }>>({});
   const duePlans = state.workoutPlans
     .filter((plan) => isScheduledForDate(plan, date, true))
     .sort((a, b) => (a.time ?? '23:59').localeCompare(b.time ?? '23:59'));
@@ -3144,35 +2996,41 @@ function WorkoutPage({
 
   useEffect(() => {
     if (!startedAt) return;
-    const timer = window.setInterval(() => {
+    const tick = () => {
       setElapsed(Math.floor((Date.now() - startedAt) / 1000));
-      setRest((value) => {
-        if (value === 1 && !Capacitor.isNativePlatform()) playWorkoutSound('done');
-        return Math.max(0, value - 1);
-      });
-    }, 1000);
+      setRest(Math.max(0, Math.ceil((restEndAt - Date.now()) / 1000)));
+    };
+    tick();
+    const timer = window.setInterval(tick, 250);
     return () => window.clearInterval(timer);
-  }, [startedAt]);
+  }, [startedAt, restEndAt]);
+  const alertedRest = useRef(0);
+  useEffect(() => {
+    if (restEndAt && rest === 0 && Date.now() >= restEndAt && alertedRest.current !== restEndAt) {
+      alertedRest.current = restEndAt;
+      if (!Capacitor.isNativePlatform()) playWorkoutSound('done');
+    }
+  }, [rest, restEndAt]);
 
   function startWorkout(plan: WorkoutPlan) {
+    if (activePlan) { setMinimized(false); return; }
     prepareWorkoutSound();
-    setActivePlan(plan);
-    setStartedAt(Date.now());
+    setMinimized(false);
     setElapsed(0);
-    setCompletedSets([]);
     setRest(0);
-    setSetValues(Object.fromEntries(plan.exercises.flatMap((exercise) =>
+    setState(current => ({ ...current, activeWorkout: { plan, date, startedAt: Date.now(), restEndAt: 0, completedSets: [], setValues: Object.fromEntries(plan.exercises.flatMap((exercise) =>
       Array.from({ length: exercise.sets }, (_, setIndex) => [
         `${exercise.id}-${setIndex}`,
         { load: exercise.weightKg ?? 0, reps: Number.parseInt(exercise.reps, 10) || 12 },
       ]),
-    )));
+    )) } }));
   }
 
   function startExerciseRest(exercise: WorkoutExercise) {
     if (exercise.restSeconds <= 0) return;
     prepareWorkoutSound();
     setRest(exercise.restSeconds);
+    updateWorkout({ restEndAt: Date.now() + exercise.restSeconds * 1000 });
     if (Capacitor.isNativePlatform()) {
       void NativeWorkoutTimer.start({
         name: `Descanso · ${exercise.name}`,
@@ -3192,11 +3050,12 @@ function WorkoutPage({
     );
     setState((current) => ({
       ...current,
+      activeWorkout: undefined,
       workoutSessions: [
         ...current.workoutSessions,
         {
           id: uid(),
-          date,
+          date: current.activeWorkout?.date ?? date,
           planName: activePlan.name,
           minutes,
           completedSets: completedSets.length,
@@ -3204,20 +3063,17 @@ function WorkoutPage({
         },
       ],
     }));
-    setActivePlan(null);
-    setStartedAt(null);
     setElapsed(0);
-    setCompletedSets([]);
     setRest(0);
     if (Capacitor.isNativePlatform()) void NativeWorkoutTimer.stop().catch(() => undefined);
   }
 
-  if (activePlan)
+  if (activePlan && !minimized)
     return (
       <div className="content-page workout-live page-enter">
         <section className="live-header">
-          <Button variant="ghost" onClick={() => { setActivePlan(null); if (Capacitor.isNativePlatform()) void NativeWorkoutTimer.stop().catch(() => undefined); }}>
-            <ArrowLeft /> Sair
+          <Button variant="ghost" onClick={() => setMinimized(true)}>
+            <ArrowLeft /> Voltar
           </Button>
           <div>
             <p className="eyebrow">TREINO EM CURSO</p>
@@ -3234,7 +3090,7 @@ function WorkoutPage({
               <CirclePause /> Descanso
             </span>
             <strong>{formatDuration(rest)}</strong>
-            <Button size="sm" variant="ghost" onClick={() => { setRest(0); if (Capacitor.isNativePlatform()) void NativeWorkoutTimer.stop().catch(() => undefined); }}>
+            <Button size="sm" variant="ghost" onClick={() => { setRest(0); updateWorkout({ restEndAt: 0 }); if (Capacitor.isNativePlatform()) void NativeWorkoutTimer.stop().catch(() => undefined); }}>
               Saltar
             </Button>
           </div>
@@ -3338,6 +3194,7 @@ function WorkoutPage({
       <section className="page-intro">
         <div>
           <p className="eyebrow">TREINO DO DIA</p>
+          {activePlan && <Button onClick={() => setMinimized(false)}>Retomar {activePlan.name}</Button>}
           <h2>{new Date(`${date}T12:00:00`).toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' })}</h2>
           <p>As sessões agendadas aparecem por ordem de hora.</p>
         </div>

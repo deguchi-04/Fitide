@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(WorkoutTimerPlugin.class);
         registerPlugin(FitideHealthPlugin.class);
+        registerPlugin(NutritionReaderPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

@@ -11,6 +11,10 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.os.PowerManager;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -38,13 +42,22 @@ public class WorkoutTimerService extends Service {
     private int remaining = 120;
     private int elapsed = 0;
     private String timerName = "Treino Fitide";
+    private long lastTick;
+    private PowerManager.WakeLock wakeLock;
 
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
             if (running) {
-                if (freeMode) elapsed += 1;
-                else if (remaining > 1) remaining -= 1;
-                else advancePhase();
+                long now = SystemClock.elapsedRealtime();
+                int seconds = (int) ((now - lastTick) / 1000);
+                lastTick += seconds * 1000L;
+                if (freeMode) elapsed += seconds;
+                else {
+                    while (seconds > 0 && running) {
+                        if (seconds < remaining) { remaining -= seconds; seconds = 0; }
+                        else { seconds -= remaining; advancePhase(); }
+                    }
+                }
                 updateNotification();
                 if (!running && !freeMode && remaining == 0) {
                     finishServiceKeepingNotification();
@@ -78,12 +91,14 @@ public class WorkoutTimerService extends Service {
             restSeconds = Math.max(0, intent.getIntExtra("restSeconds", 60));
             rounds = Math.max(1, intent.getIntExtra("rounds", 7));
             round = 1; elapsed = 0; restPhase = false; remaining = workSeconds; running = true;
+            lastTick = SystemClock.elapsedRealtime();
+            holdCpu();
             int type = Build.VERSION.SDK_INT >= 34 ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
             ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type);
         } else if (ACTION_PAUSE.equals(action)) {
-            running = false; updateNotification();
+            running = false; releaseCpu(); updateNotification();
         } else if (ACTION_RESUME.equals(action)) {
-            running = true; updateNotification();
+            running = true; lastTick = SystemClock.elapsedRealtime(); holdCpu(); updateNotification();
         } else if (ACTION_SKIP.equals(action)) {
             advancePhase(); updateNotification();
             if (!running && !freeMode && remaining == 0) finishServiceKeepingNotification();
@@ -95,6 +110,12 @@ public class WorkoutTimerService extends Service {
 
     private void advancePhase() {
         if (freeMode) return;
+        // Explicit alarm audio: an ongoing notification may not sound again.
+        try {
+            ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_ALARM, 90);
+            tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 1200);
+            new Handler(Looper.getMainLooper()).postDelayed(tone::release, 1500);
+        } catch (RuntimeException ignored) { /* The notification remains available. */ }
         if (restPhase) {
             round += 1; restPhase = false; remaining = workSeconds;
         } else if (round >= rounds) {
@@ -152,6 +173,18 @@ public class WorkoutTimerService extends Service {
         stopSelf();
     }
 
-    @Override public void onDestroy() { handler.removeCallbacks(ticker); super.onDestroy(); }
+    private void holdCpu() {
+        releaseCpu();
+        if (freeMode) return;
+        wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Fitide:WorkoutTimer");
+        wakeLock.acquire(Math.min(12 * 60 * 60 * 1000L, ((long) (workSeconds + restSeconds) * rounds + 60) * 1000L));
+    }
+
+    private void releaseCpu() {
+        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        wakeLock = null;
+    }
+
+    @Override public void onDestroy() { releaseCpu(); handler.removeCallbacks(ticker); super.onDestroy(); }
     @Nullable @Override public IBinder onBind(Intent intent) { return null; }
 }
