@@ -17,7 +17,8 @@ export default function PrivacyPage() {
           com terceiros. A cópia sincronizada fica na base privada da tua
           aplicação.
         </p>
-        <h2>Fotografias e produtos</h2>
+        <h2>Fotografias, assistente e produtos</h2>
+        <p>O assistente envia a descrição escrita da refeição ao Gemini para identificar alimentos e quantidades. Os valores nutricionais são obtidos no catálogo e apresentados para revisão.</p>
         <p>Ao pedir o reconhecimento de uma fotografia, a imagem é enviada à API Gemini da Google. Não enviamos os dados do Health Connect nessa análise. A Fitide não guarda a fotografia no servidor. As condições da Google aplicam-se ao processamento. Para códigos de barras, enviamos apenas o código ao Open Food Facts. Os resultados devem ser confirmados antes de guardar.</p>
         <h2>Escolha e eliminação</h2>
         <p>

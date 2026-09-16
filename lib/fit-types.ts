@@ -119,6 +119,7 @@ export interface WorkoutPlan {
 }
 
 export interface WorkoutSession {
+  exercises?: { key: string; name: string; equipment: string; sets: { load: number; reps: number }[] }[];
   id: string;
   planId?: string;
   activityId?: string;
@@ -183,7 +184,11 @@ export interface HealthSnapshot {
 }
 
 export interface AppState {
-  mealDraft?: { date: string; mealId?: string; type: string; ingredients: IngredientEntry[]; manualName: string; manual: Record<keyof Nutrients, number | ''>; grams: number; foodId?: string; quantityMode?: 'g' | 'ml' | 'unit'; foodQuery: string; mode: 'Catálogo' | 'Rótulo'; assistantText: string };
+  favoriteIngredients?: IngredientEntry[];
+  plannedMeals?: Meal[];
+  shoppingChecked?: string[];
+  reuseWorkoutPerformance?: boolean;
+  mealDraft?: { planned?: boolean; date: string; mealId?: string; type: string; ingredients: IngredientEntry[]; manualName: string; manual: Record<keyof Nutrients, number | ''>; grams: number; foodId?: string; quantityMode?: 'g' | 'ml' | 'unit'; foodQuery: string; mode: 'Catálogo' | 'Rótulo'; assistantText: string };
   activeWorkout?: {
     plan: WorkoutPlan;
     date: string;

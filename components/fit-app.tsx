@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ExerciseCatalog } from '@/components/exercise-catalog';
-import { LabelCamera } from '@/components/label-camera';
 import { FoodPhotoTools } from '@/components/food-photo-tools';
+import { IngredientShortcuts } from '@/components/ingredient-shortcuts';
+import { MealPlanner } from '@/components/meal-planner';
+import { WorkoutProgression } from '@/components/workout-progression';
+import { adaptExercise, exerciseKey, frequentIngredients, ingredientKey, latestExerciseSets } from '@/lib/personal-tracking';
 import { readNutritionLabel } from '@/lib/nutrition-label';
 import { WidgetReorderButton } from '@/components/widget-reorder';
 import ReactCrop, { type PercentCrop, type PixelCrop } from 'react-image-crop';
@@ -696,6 +699,7 @@ export default function FitApp() {
     'loading',
   );
   const [mealOpen, setMealOpen] = useState(false);
+  const [planningMeal, setPlanningMeal] = useState(false);
   const [editingMeal, setEditingMeal] = useState<Meal | null>(null);
   const [restoredLabelPhoto, setRestoredLabelPhoto] = useState<NativeLabelPhotoResult | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -795,7 +799,7 @@ export default function FitApp() {
           let pending: { activeWorkout?: AppState['activeWorkout'] } | null = null;
           try { pending = JSON.parse(localStorage.getItem('fitide-workout-pending') ?? 'null'); } catch { /* Server remains authoritative when cache is unavailable. */ }
           setState(mergeState(pending ? { ...saved, activeWorkout: pending.activeWorkout } : saved));
-          if (saved.mealDraft) { setSelectedDate(saved.mealDraft.date); setEditingMeal(saved.meals.find(item => item.id === saved.mealDraft?.mealId) ?? null); setMealOpen(true); }
+          if (saved.mealDraft) { setSelectedDate(saved.mealDraft.date); setPlanningMeal(Boolean(saved.mealDraft.planned)); setEditingMeal((saved.mealDraft.planned ? saved.plannedMeals ?? [] : saved.meals).find(item => item.id === saved.mealDraft?.mealId) ?? null); setMealOpen(true); }
         }
         setSync('saved');
       })
@@ -1069,8 +1073,8 @@ export default function FitApp() {
         onWater={updateWater}
         onFast={toggleFast}
         onPastFast={addPastFast}
-        onAddMeal={() => { setEditingMeal(null); setMealOpen(true); }}
-        onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
+        onAddMeal={() => { setEditingMeal(null); setPlanningMeal(false); setMealOpen(true); }}
+        onEditMeal={(meal) => { setEditingMeal(meal); setPlanningMeal(false); setMealOpen(true); }}
         onGo={setPage}
         healthSyncStatus={healthSyncStatus}
         healthSyncMessage={healthSyncMessage}
@@ -1079,11 +1083,15 @@ export default function FitApp() {
     );
     else if (targetPage === 'meals') content = (
       <MealsPage
+        state={state}
+        setState={setState}
+        onPlan={(planDate) => { setSelectedDate(planDate); setPlanningMeal(true); setEditingMeal(null); setMealOpen(true); }}
+        onEditPlan={(meal) => { setSelectedDate(meal.date); setPlanningMeal(true); setEditingMeal(meal); setMealOpen(true); }}
         meals={dayMeals}
         consumed={consumed}
         date={selectedDate}
-        onAdd={() => { setEditingMeal(null); setMealOpen(true); }}
-        onEdit={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
+        onAdd={() => { setEditingMeal(null); setPlanningMeal(false); setMealOpen(true); }}
+        onEdit={(meal) => { setEditingMeal(meal); setPlanningMeal(false); setMealOpen(true); }}
         onDelete={(id) => patchState({ meals: state.meals.filter((meal) => meal.id !== id) })}
       />
     );
@@ -1095,7 +1103,7 @@ export default function FitApp() {
         selectedDate={selectedDate}
         setSelectedDate={setSelectedDate}
         onOpenDay={() => setPage('today')}
-        onEditMeal={(meal) => { setEditingMeal(meal); setMealOpen(true); }}
+        onEditMeal={(meal) => { setEditingMeal(meal); setPlanningMeal(false); setMealOpen(true); }}
       />
     );
     else if (targetPage === 'progress') content = <ProgressPage state={state} setState={setState} />;
@@ -1225,7 +1233,7 @@ export default function FitApp() {
         <button
           className="add"
           aria-label="Adicionar refeição"
-          onClick={() => { setEditingMeal(null); setMealOpen(true); }}
+          onClick={() => { setEditingMeal(null); setPlanningMeal(false); setMealOpen(true); }}
         >
           <Plus />
         </button>
@@ -1237,6 +1245,10 @@ export default function FitApp() {
           date={selectedDate}
           meal={editingMeal ?? undefined}
           customFoods={state.customFoods}
+          history={state.meals}
+          favorites={state.favoriteIngredients ?? []}
+          onFavorites={(favoriteIngredients) => patchState({ favoriteIngredients })}
+          planned={planningMeal}
           draft={state.mealDraft}
           onDraft={(mealDraft) => { try { localStorage.setItem('fitide-meal-draft', JSON.stringify(mealDraft)); } catch { /* Server save remains available. */ } setState(current => ({ ...current, mealDraft })); }}
           restoredLabelPhoto={restoredLabelPhoto}
@@ -1245,8 +1257,10 @@ export default function FitApp() {
           onClose={() => { setMealOpen(false); setEditingMeal(null); }}
           onSave={(meal) => {
             try { localStorage.setItem('fitide-meal-draft', 'null'); } catch { /* Optional local journal. */ }
-            patchState({ mealDraft: undefined, meals: editingMeal ? state.meals.map((item) => item.id === meal.id ? meal : item) : [...state.meals, meal] });
+            if (planningMeal) patchState({ mealDraft: undefined, plannedMeals: editingMeal ? (state.plannedMeals ?? []).map(item => item.id === meal.id ? meal : item) : [...(state.plannedMeals ?? []), meal] });
+            else patchState({ mealDraft: undefined, meals: editingMeal ? state.meals.map((item) => item.id === meal.id ? meal : item) : [...state.meals, meal] });
             setMealOpen(false);
+            setPlanningMeal(false);
             setEditingMeal(null);
           }}
         />
@@ -1963,6 +1977,7 @@ function TodayPage({
 }
 
 function MealsPage({
+  state, setState, onPlan, onEditPlan,
   meals,
   consumed,
   date,
@@ -1970,6 +1985,10 @@ function MealsPage({
   onEdit,
   onDelete,
 }: {
+  state: AppState;
+  setState: React.Dispatch<React.SetStateAction<AppState>>;
+  onPlan: (date: string) => void;
+  onEditPlan: (meal: Meal) => void;
   meals: Meal[];
   consumed: Nutrients;
   date: string;
@@ -2008,6 +2027,7 @@ function MealsPage({
           value={`${consumed.carbs.toFixed(1)} g`}
         />
       </section>
+      <MealPlanner state={state} setState={setState} date={date} onCreate={onPlan} onEdit={onEditPlan} />
       <div className="meal-list">
         {meals.length ? (
           meals.map((meal) => (
@@ -2046,6 +2066,7 @@ function MealsPage({
 }
 
 function MealDialog({
+  history, favorites, onFavorites, planned = false,
   draft,
   onDraft,
   date,
@@ -2057,6 +2078,10 @@ function MealDialog({
   onClose,
   onSave,
 }: {
+  history: Meal[];
+  favorites: IngredientEntry[];
+  onFavorites: (items: IngredientEntry[]) => void;
+  planned?: boolean;
   draft?: AppState['mealDraft'];
   onDraft: (draft: AppState['mealDraft']) => void;
   date: string;
@@ -2068,7 +2093,7 @@ function MealDialog({
   onClose: () => void;
   onSave: (meal: Meal) => void;
 }) {
-  const restoredDraft = useRef(draft?.date === date && draft?.mealId === meal?.id ? draft : undefined).current;
+  const restoredDraft = useRef(draft?.date === date && draft?.mealId === meal?.id && Boolean(draft?.planned) === planned ? draft : undefined).current;
   const [type, setType] = useState(restoredDraft?.type ?? meal?.type ?? 'Almoço');
   const [mode, setMode] = useState<'Catálogo' | 'Rótulo'>(restoredDraft?.mode ?? 'Catálogo');
   const [foodId, setFoodId] = useState(restoredDraft?.foodId ?? foodCatalog[0].id);
@@ -2086,7 +2111,8 @@ function MealDialog({
   const [assistantMessage, setAssistantMessage] = useState('');
   const [assistantOpen, setAssistantOpen] = useState(false);
   const labelPhotoInput = useRef<HTMLInputElement>(null);
-  const [cameraOpen, setCameraOpen] = useState(false);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const assistantCache = useRef(new Map<string, string>());
   const labelCropImage = useRef<HTMLImageElement>(null);
   const labelWorker = useRef<{ terminate: () => Promise<unknown> } | null>(null);
   const labelScanRun = useRef(0);
@@ -2109,24 +2135,26 @@ function MealDialog({
   });
   const [ingredients, setIngredients] = useState<IngredientEntry[]>(restoredDraft?.ingredients ?? meal?.ingredients ?? []);
   const draftCallback = useRef(onDraft); draftCallback.current = onDraft;
-  useEffect(() => { draftCallback.current({ date, mealId: meal?.id, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, assistantText }); }, [date, meal?.id, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, assistantText]);
+  useEffect(() => { draftCallback.current({ date, mealId: meal?.id, planned, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, assistantText }); }, [date, meal?.id, planned, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, assistantText]);
   const total = roundNutrients(sumNutrients(ingredients));
   const availableFoods = useMemo<FoodCatalogItem[]>(() => [
     ...customFoods.map((food) => ({ id: food.id, name: food.name, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber, calcium: food.calcium, iron: food.iron, vitaminC: food.vitaminC })),
     ...foodCatalog,
   ], [customFoods]);
   const selectedFood = availableFoods.find((food) => food.id === foodId);
+  const foodUsage = useMemo(() => new Map(frequentIngredients(history).map(item => [ingredientKey(item.ingredient.name), item.count])), [history]);
+  const foodPriority = (name: string) => (favorites.some(item => ingredientKey(item.name) === ingredientKey(name)) ? 100000 : 0) + (foodUsage.get(ingredientKey(name)) ?? 0);
   const foodMatches = useMemo(() => {
-    if (!foodQuery.trim()) return availableFoods.slice(0, 8).map((food) => ({ food, score: 0 }));
+    if (!foodQuery.trim()) return [...availableFoods].sort((a,b) => foodPriority(b.name)-foodPriority(a.name)).slice(0, 8).map((food) => ({ food, score: 0 }));
     return availableFoods
       .map((food) => ({ food, score: foodMatchScore(foodQuery, food.name) }))
       .filter(({ score }) => score > 0)
       .sort(
         (a, b) =>
-          b.score - a.score || a.food.name.localeCompare(b.food.name, 'pt'),
+          b.score - a.score || foodPriority(b.food.name)-foodPriority(a.food.name) || a.food.name.localeCompare(b.food.name, 'pt'),
       )
       .slice(0, 10);
-  }, [availableFoods, foodQuery]);
+  }, [availableFoods, foodQuery, foodUsage, favorites]);
   const resolvedFood = foodQuery.trim()
     ? normalizeText(selectedFood?.name ?? '') === normalizeText(foodQuery)
       ? selectedFood
@@ -2444,8 +2472,24 @@ function MealDialog({
     }
   }
 
-  function analyzeMealDescription() {
-    const parsed = parseMealDescription(assistantText);
+  async function analyzeMealDescription() {
+    if (assistantBusy || !assistantText.trim()) return;
+    setAssistantBusy(true); setAssistantMessage('A interpretar com Gemini…');
+    try {
+      const original = assistantText.trim();
+      let result = assistantCache.current.get(original);
+      if (!result) {
+        const response = await fetch('/api/food-vision', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'text', text: original }), signal: AbortSignal.timeout(35000) });
+        const data = await response.json() as { text?: string; error?: string };
+        if (!response.ok || !data.text) throw new Error(data.error ?? 'Não foi possível interpretar.');
+        result = data.text; assistantCache.current.set(original, result);
+      }
+      buildAssistantDrafts(result);
+    } catch (error) { setAssistantMessage(error instanceof Error ? error.message : 'Gemini indisponível. Tenta novamente.'); }
+    finally { setAssistantBusy(false); }
+  }
+  function buildAssistantDrafts(text: string) {
+    const parsed = parseMealDescription(text);
     if (!parsed.length) {
       setAssistantDrafts([]);
       setAssistantMessage('Escreve pelo menos um alimento e a respetiva quantidade.');
@@ -2523,7 +2567,7 @@ function MealDialog({
       >
         <header>
           <div>
-            <p className="eyebrow">{meal ? 'EDITAR REFEIÇÃO' : 'NOVA REFEIÇÃO'}</p>
+            <p className="eyebrow">{planned ? 'PLANEAR REFEIÇÃO' : meal ? 'EDITAR REFEIÇÃO' : 'NOVA REFEIÇÃO'}</p>
             <h2 id="meal-title">{meal ? 'Corrige os dados da refeição' : 'O que comeste?'}</h2>
           </div>
           <Button variant="ghost" size="icon" aria-label="Fechar" onClick={onClose}>
@@ -2531,8 +2575,10 @@ function MealDialog({
           </Button>
         </header>
         <div className="dialog-scroll" ref={mealScrollRef}>
-          <FoodPhotoTools onText={(text, kind) => {
-            if (kind === 'food') { setAssistantText(text); setAssistantOpen(true); setAssistantMessage('Estimativa por foto: confirma pesos e procura as correspondências.'); }
+          {planned && <p>Planeada para {date}. Não será contada no consumo até marcares «Já comi».</p>}
+          <IngredientShortcuts meals={history} favorites={favorites} onFavorites={onFavorites} onAdd={item => setIngredients(current => [...current, { ...item, id: uid() }])} />
+          <FoodPhotoTools onLabelPhoto={file => { setMode('Rótulo'); void openLabelCrop(file); }} onText={(text, kind) => {
+            if (kind === 'food') { setAssistantText(text); setAssistantOpen(true); buildAssistantDrafts(text); }
             else { const result = readNutritionLabel(text); if (result.basis !== 'g') throw new Error('Não consegui confirmar valores por 100 g.'); setMode('Rótulo'); setManual({ calories: '', protein: '', carbs: '', fat: '', fiber: '', calcium: '', iron: '', vitaminC: '', ...result.values }); }
           }} onProduct={(name, values) => { setManualName(name); setMode('Rótulo'); setManual({ calories: '', protein: '', carbs: '', fat: '', fiber: '', calcium: '', iron: '', vitaminC: '', ...values }); }} />
           <section className={`meal-assistant ${assistantOpen ? 'is-open' : 'is-collapsed'}`} aria-labelledby="meal-assistant-title">
@@ -2561,8 +2607,8 @@ function MealDialog({
                 }}
               />
               <div className="meal-assistant-actions">
-                <small>{assistantMessage || 'Também entende kg, litros, unidades e quantidades por extenso.'}</small>
-                <Button type="button" disabled={!assistantText.trim()} onClick={analyzeMealDescription}>
+                <small>{assistantMessage || 'Gemini interpreta a descrição; os macros vêm do catálogo. Revê as quantidades: quando omitidas, são estimadas.'}</small>
+                <Button type="button" disabled={assistantBusy || !assistantText.trim()} onClick={() => void analyzeMealDescription()}>
                   <Sparkles /> Interpretar prato
                 </Button>
               </div>
@@ -2622,7 +2668,7 @@ function MealDialog({
               )}
             </div>}
           </section>
-          <div className="form-grid two">
+          <div className="form-grid two meal-options-grid">
             <Field label="Tipo de refeição">
               <div className="meal-type-cards">{['Pequeno-almoço', 'Almoço', 'Lanche', 'Jantar', 'Ceia'].map((item, index) => <button type="button" key={item} aria-pressed={type === item} onClick={() => setType(item)}><span>{['☕', '🍽️', '🍎', '🍲', '🌙'][index]}</span>{item}</button>)}</div>
             </Field>
@@ -2729,36 +2775,7 @@ function MealDialog({
           ) : (
             <div className="manual-food">
               <section className={`label-scanner ${labelScanStatus}`} aria-live="polite">
-                <div className="label-scanner-copy">
-                  <span><Camera /></span>
-                  <div>
-                    <strong>Ler tabela pela câmara</strong>
-                    <small>Usa apenas valores por 100 g/ml. Lípidos são preenchidos como gordura.</small>
-                  </div>
-                </div>
-                <input
-                  ref={labelPhotoInput}
-                  className="label-photo-input"
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) void openLabelCrop(file);
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={labelScanStatus === 'reading'}
-                  onClick={() => {
-                    setCameraOpen(true);
-                  }}
-                >
-                  {labelScanStatus === 'reading' ? <LoaderCircle className="spin" /> : <Camera />}
-                  {labelScanStatus === 'reading' ? 'A analisar…' : labelScanStatus === 'done' ? 'Ler outro rótulo' : 'Fotografar rótulo'}
-                </Button>
-                <Button type="button" variant="ghost" disabled={labelScanStatus === 'reading'} onClick={() => labelPhotoInput.current?.click()}>Escolher da galeria</Button>
-                {cameraOpen && <LabelCamera onClose={() => setCameraOpen(false)} onPhoto={file => { setCameraOpen(false); void openLabelCrop(file); }} />}
+                <small>Para ler uma tabela, abre «Fotografar prato, rótulo ou código» e escolhe Rótulo. Apenas valores por 100 g.</small>
                 {labelScanStatus === 'reading' && <Progress value={labelScanProgress} />}
                 {labelScanMessage && <small className="label-scan-message">{labelScanMessage}</small>}
               </section>
@@ -2896,8 +2913,8 @@ function MealDialog({
                 <Plus /> {editingFoodId ? 'Atualizar e adicionar' : 'Adicionar ingrediente'}
               </Button>
               {customFoods.length > 0 && (
-                <div className="saved-foods">
-                  <strong>Os meus alimentos</strong>
+                <details className="saved-foods">
+                  <summary>Os meus alimentos ({customFoods.length})</summary>
                   {customFoods.map((food) => (
                     <div key={food.id}>
                       <span>{food.name}</span>
@@ -2905,7 +2922,7 @@ function MealDialog({
                       <Button type="button" variant="ghost" size="icon" aria-label={`Apagar ${food.name}`} onClick={() => onCustomFoodsChange(customFoods.filter((item) => item.id !== food.id))}><Trash2 /></Button>
                     </div>
                   ))}
-                </div>
+                </details>
               )}
             </div>
           )}
@@ -2918,6 +2935,7 @@ function MealDialog({
               <div className="ingredient-row" key={item.id}>
                 <div>
                   <strong>{item.name}</strong>
+                  <Button type="button" variant="ghost" aria-label={`Favorito ${item.name}`} aria-pressed={favorites.some(f => ingredientKey(f.name) === ingredientKey(item.name))} onClick={() => onFavorites(favorites.some(f => ingredientKey(f.name) === ingredientKey(item.name)) ? favorites.filter(f => ingredientKey(f.name) !== ingredientKey(item.name)) : [...favorites, item])}>{favorites.some(f => ingredientKey(f.name) === ingredientKey(item.name)) ? '★ Favorito' : '☆ Guardar favorito'}</Button>
                   <div className="ingredient-weight-edit">
                     <NumberInput
                       value={item.grams}
@@ -2972,7 +2990,7 @@ function MealDialog({
               })
             }
           >
-            <Save /> {meal ? 'Guardar alterações' : 'Guardar refeição'}
+            <Save /> {planned ? 'Guardar planeamento' : meal ? 'Guardar alterações' : 'Guardar refeição'}
           </Button>
         </footer>
       </section>
@@ -3038,6 +3056,7 @@ function WorkoutPage({
 
   function startWorkout(plan: WorkoutPlan) {
     if (activePlan) { setMinimized(false); return; }
+    const remembered = (exercise: WorkoutExercise, index: number) => { const sets = state.reuseWorkoutPerformance === false ? [] : latestExerciseSets(exercise, state.workoutSessions, date); return sets.length ? sets[Math.min(index, sets.length - 1)] : { load: exercise.weightKg ?? 0, reps: Number.parseInt(exercise.reps, 10) || 12 }; };
     prepareWorkoutSound();
     setMinimized(false);
     setElapsed(0);
@@ -3045,7 +3064,7 @@ function WorkoutPage({
     setState(current => ({ ...current, activeWorkout: { plan, date, startedAt: Date.now(), restEndAt: 0, completedSets: [], setValues: Object.fromEntries(plan.exercises.flatMap((exercise) =>
       Array.from({ length: exercise.sets }, (_, setIndex) => [
         `${exercise.id}-${setIndex}`,
-        { load: exercise.weightKg ?? 0, reps: Number.parseInt(exercise.reps, 10) || 12 },
+        remembered(exercise, setIndex),
       ]),
     )) } }));
   }
@@ -3087,6 +3106,7 @@ function WorkoutPage({
           planId: activePlan.id,
           activityId: activePlan.activityId,
           planName: activePlan.name,
+          exercises: activePlan.exercises.map(exercise => ({ key: exerciseKey(exercise), name: exercise.name, equipment: exercise.equipment, sets: Array.from({ length: exercise.sets }, (_, index) => { const key = `${exercise.id}-${index}`; const values = setValues[key]; return completedSets.includes(key) && values && typeof values.load === 'number' && Number.isFinite(values.load) && values.load >= 0 && typeof values.reps === 'number' && Number.isFinite(values.reps) && values.reps > 0 ? { load: values.load, reps: values.reps } : null; }).filter((value): value is { load: number; reps: number } => value !== null) })).filter(exercise => exercise.sets.length > 0),
           minutes,
           completedSets: completedSets.length,
           calories,
@@ -3241,6 +3261,7 @@ function WorkoutPage({
       </section>
       <div className="workout-day-list">
           <TrainingTimer state={state} setState={setState} />
+          <WorkoutProgression state={state} setState={setState} />
           {scheduleItems.length ? (
             scheduleItems.map((item) => item.type === 'plan' ? (
               <PlanCard key={`plan-${item.id}`} plan={item.plan} completed={state.workoutSessions.some(session => session.date === date && (session.planId === item.id || (!session.planId && session.planName === item.plan.name)))} onStart={() => startWorkout(item.plan)} />
@@ -4187,6 +4208,7 @@ function ProgressPage({
           }
         />
       </div>
+      <WorkoutProgression state={state} setState={setState} />
       <div className="charts-grid">
         <div className="chart-controls">
           <span>Período dos gráficos</span>
@@ -4565,7 +4587,7 @@ function SettingsPage({
         days: scheduleMode === 'routine' ? [...days] : [],
         specificDate: scheduleMode === 'single' ? singleDate : undefined,
         time: activityTime,
-        exercises: result.exercises,
+        exercises: state.reuseWorkoutPerformance === false ? result.exercises : result.exercises.map(exercise => adaptExercise(exercise, state.workoutSessions)),
       };
       const activity: Activity = {
         id: activityId,

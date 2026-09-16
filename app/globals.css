@@ -724,3 +724,34 @@ details[open] > .workout-history-toggle svg { transform:rotate(180deg); }
 .food-photo-tools { padding: 12px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
 .food-photo-tools summary, .ingredient-list summary { cursor: pointer; }
 .chart-controls { flex-wrap: wrap; }
+.personal-panel { padding: 20px; border: 1px solid var(--border); border-radius: 18px; background: var(--card); color: var(--foreground); margin: 16px 0; }
+.personal-panel h3 { font-size: 20px; margin: 0 0 12px; }
+.personal-panel p, .ingredient-shortcuts small { color: var(--muted-foreground); font-size: 14px; }
+.personal-panel select { max-width: 100%; width: 100%; padding: 10px; background: var(--background); color: var(--foreground); border: 1px solid var(--border); border-radius: 10px; }
+.planning-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 12px 0; }
+.planning-controls label { flex: 1; min-width: 135px; }
+.planned-meal { padding: 14px 0; border-bottom: 1px solid var(--border); display: grid; gap: 10px; }
+.planned-meal small { display: block; margin-top: 6px; color: var(--muted-foreground); }
+.planned-meal > div { display: flex; gap: 8px; flex-wrap: wrap; }
+.shopping-item { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
+.shopping-item input { width: 20px; height: 20px; flex-shrink: 0; }
+.shopping-item span { flex: 1; }
+.shopping-item:has(input:checked) span { text-decoration: line-through; opacity: .65; }
+.record-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.record-stats strong { display: block; font-size: 20px; color: var(--foreground); margin-top: 5px; }
+.ingredient-shortcuts { margin-bottom: 18px; }
+.ingredient-shortcut-grid { display: grid; gap: 8px; margin-top: 10px; }
+.ingredient-shortcut-grid > div { display: flex; gap: 4px; }
+.ingredient-shortcut-grid > div > button:first-child { flex: 1; height: auto; min-height: 50px; text-align: left; justify-content: space-between; white-space: normal; }
+.ingredient-shortcut-grid small { display: block; }
+.meal-options-grid > :first-child { grid-column: 1 / -1; }
+.meal-type-cards { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); width: 100%; gap: 10px; }
+.meal-type-cards button { align-content: center; justify-items: center; min-height: 76px; text-align: center; padding: 10px 6px; }
+.meal-type-cards button > span { font-size: 24px; }
+.food-photo-tools .segmented { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin: 14px 0; height: auto; }
+.food-photo-tools .segmented button { min-width: 0; white-space: normal; min-height: 48px; }
+.photo-action-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 12px 0; }
+.photo-action-grid button { width: 100%; min-height: 48px; }
+.saved-foods summary { cursor: pointer; font-weight: 650; padding: 10px 0; }
+.workout-reuse:has(input:checked) span { text-decoration: none; opacity: 1; }
+@media(max-width: 520px) { .meal-type-cards { grid-template-columns: repeat(2,minmax(0,1fr)); }.meal-type-cards button:last-child { grid-column: 1 / -1; } }

@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { LabelCamera } from '@/components/label-camera';
 
-export function FoodPhotoTools({ onText, onProduct }: { onText: (text: string, mode: 'label' | 'food') => void; onProduct: (name: string, values: Record<string, number>) => void }) {
+export function FoodPhotoTools({ onText, onProduct, onLabelPhoto }: { onText: (text: string, mode: 'label' | 'food') => void; onProduct: (name: string, values: Record<string, number>) => void; onLabelPhoto: (file: File) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<'label' | 'food' | 'barcode'>('food');
   const [camera, setCamera] = useState(false);
@@ -15,6 +15,7 @@ export function FoodPhotoTools({ onText, onProduct }: { onText: (text: string, m
     try { const response = await fetch(`/api/barcode?code=${encodeURIComponent(value)}`); const data = await response.json() as { error?: string; name: string; values: Record<string, number> }; if (!response.ok) throw new Error(data.error); onProduct(data.name, data.values); setMessage('Open Food Facts · confirma os valores por 100 g. Campos em falta ficam vazios.'); } catch (error) { setMessage(error instanceof Error ? error.message : 'Não encontrado.'); } finally { setBusy(false); }
   }
   async function photo(file: File) {
+    if (mode === 'label') { setCamera(false); onLabelPhoto(file); if (input.current) input.current.value = ''; return; }
     setCamera(false); setBusy(true); setMessage('A analisar…');
     let bitmap: ImageBitmap | undefined;
     try {
@@ -34,10 +35,10 @@ export function FoodPhotoTools({ onText, onProduct }: { onText: (text: string, m
       onText(data.text, mode); setMessage(mode === 'food' ? 'Porções estimadas. Revê os alimentos e pesos no assistente antes de adicionar.' : 'Confirma os valores preenchidos antes de adicionar.');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Falha na leitura.'); } finally { bitmap?.close(); setBusy(false); if (input.current) input.current.value = ''; }
   }
-  return <details className="food-photo-tools"><summary>📷 Foto com Gemini / código de barras</summary>
+  return <details className="food-photo-tools"><summary>📷 Fotografar prato, rótulo ou código</summary>
     <p>A análise com Gemini envia a foto à Google. Revê sempre os resultados; as porções são estimadas.</p>
     <div className="segmented">{([['food', 'Prato'], ['label', 'Rótulo'], ['barcode', 'Código de barras']] as const).map(([value, label]) => <button type="button" key={value} disabled={busy} className={mode === value ? 'selected' : ''} onClick={() => setMode(value)}>{label}</button>)}</div>
-    <Button type="button" disabled={busy} onClick={() => setCamera(true)}>Fotografar</Button> <Button type="button" variant="outline" disabled={busy} onClick={() => input.current?.click()}>Galeria</Button>
+    <div className="photo-action-grid"><Button type="button" disabled={busy} onClick={() => setCamera(true)}>📷 Fotografar</Button><Button type="button" variant="outline" disabled={busy} onClick={() => input.current?.click()}>🖼️ Galeria</Button></div>
     <input ref={input} type="file" accept="image/*" hidden onChange={event => { if (event.target.files?.[0]) void photo(event.target.files[0]); }} />
     {mode === 'barcode' && <label>Código do produto<input inputMode="numeric" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} /><Button type="button" disabled={busy || !/^\d{8,14}$/.test(code)} onClick={() => void lookup(code)}>Procurar</Button></label>}
     {message && <p role="status">{message}</p>}{camera && <LabelCamera onClose={() => setCamera(false)} onPhoto={file => void photo(file)} />}
