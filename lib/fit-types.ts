@@ -183,6 +183,7 @@ export interface HealthSnapshot {
 }
 
 export interface AppState {
+  mealDraft?: { date: string; mealId?: string; type: string; ingredients: IngredientEntry[]; manualName: string; manual: Record<keyof Nutrients, number | ''>; grams: number; foodId?: string; quantityMode?: 'g' | 'ml' | 'unit'; foodQuery: string; mode: 'Catálogo' | 'Rótulo'; assistantText: string };
   activeWorkout?: {
     plan: WorkoutPlan;
     date: string;

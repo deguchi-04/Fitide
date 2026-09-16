@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ExerciseCatalog } from '@/components/exercise-catalog';
 import { LabelCamera } from '@/components/label-camera';
+import { FoodPhotoTools } from '@/components/food-photo-tools';
 import { readNutritionLabel } from '@/lib/nutrition-label';
 import { WidgetReorderButton } from '@/components/widget-reorder';
 import ReactCrop, { type PercentCrop, type PixelCrop } from 'react-image-crop';
@@ -155,6 +156,7 @@ type Page =
   | 'progress'
   | 'settings';
 type ChartRange = 'week' | 'month' | 'year';
+function mealOrder(a: Meal, b: Meal) { const order = ['Pequeno-almoço', 'Almoço', 'Lanche', 'Jantar', 'Ceia']; return (order.indexOf(a.type) < 0 ? 99 : order.indexOf(a.type)) - (order.indexOf(b.type) < 0 ? 99 : order.indexOf(b.type)) || a.createdAt.localeCompare(b.createdAt); }
 const pageLabels: Record<Page, string> = {
   today: 'Home',
   meals: 'Refeições',
@@ -646,6 +648,7 @@ function mergeState(saved: Partial<AppState>): AppState {
     })),
     activityCheckIns: saved.activityCheckIns ?? [],
     meals: saved.meals ?? [],
+    mealDraft: saved.mealDraft,
     customFoods: saved.customFoods ?? [],
     weights: saved.weights ?? [],
     water: saved.water ?? [],
@@ -788,9 +791,11 @@ export default function FitApp() {
       )
       .then(({ state: saved }) => {
         if (saved) {
+          try { const localDraft = localStorage.getItem('fitide-meal-draft'); if (localDraft) saved.mealDraft = JSON.parse(localDraft); } catch { /* Recover from the server instead. */ }
           let pending: { activeWorkout?: AppState['activeWorkout'] } | null = null;
           try { pending = JSON.parse(localStorage.getItem('fitide-workout-pending') ?? 'null'); } catch { /* Server remains authoritative when cache is unavailable. */ }
           setState(mergeState(pending ? { ...saved, activeWorkout: pending.activeWorkout } : saved));
+          if (saved.mealDraft) { setSelectedDate(saved.mealDraft.date); setEditingMeal(saved.meals.find(item => item.id === saved.mealDraft?.mealId) ?? null); setMealOpen(true); }
         }
         setSync('saved');
       })
@@ -883,7 +888,7 @@ export default function FitApp() {
   }, [state, loaded]);
 
   const dayMeals = useMemo(
-    () => state.meals.filter((meal) => meal.date === selectedDate),
+    () => state.meals.filter((meal) => meal.date === selectedDate).sort(mealOrder),
     [state.meals, selectedDate],
   );
   const consumed = useMemo(
@@ -952,6 +957,7 @@ export default function FitApp() {
   }
 
   async function resetProfile() {
+    try { localStorage.setItem('fitide-meal-draft', 'null'); } catch { /* Optional draft journal. */ }
     await fetch('/api/state', { method: 'DELETE' }).catch(() => undefined);
     setSelectedDate(localDateKey());
     setPage('today');
@@ -1231,12 +1237,15 @@ export default function FitApp() {
           date={selectedDate}
           meal={editingMeal ?? undefined}
           customFoods={state.customFoods}
+          draft={state.mealDraft}
+          onDraft={(mealDraft) => { try { localStorage.setItem('fitide-meal-draft', JSON.stringify(mealDraft)); } catch { /* Server save remains available. */ } setState(current => ({ ...current, mealDraft })); }}
           restoredLabelPhoto={restoredLabelPhoto}
           onRestoredLabelPhotoConsumed={() => setRestoredLabelPhoto(null)}
           onCustomFoodsChange={(customFoods) => patchState({ customFoods })}
           onClose={() => { setMealOpen(false); setEditingMeal(null); }}
           onSave={(meal) => {
-            patchState({ meals: editingMeal ? state.meals.map((item) => item.id === meal.id ? meal : item) : [...state.meals, meal] });
+            try { localStorage.setItem('fitide-meal-draft', 'null'); } catch { /* Optional local journal. */ }
+            patchState({ mealDraft: undefined, meals: editingMeal ? state.meals.map((item) => item.id === meal.id ? meal : item) : [...state.meals, meal] });
             setMealOpen(false);
             setEditingMeal(null);
           }}
@@ -1720,7 +1729,7 @@ function TodayPage({
         <CardContent>
           {state.meals.filter((meal) => meal.date === date).length ? (
             state.meals
-              .filter((meal) => meal.date === date)
+              .filter((meal) => meal.date === date).sort(mealOrder)
               .map((meal) => <button type="button" className="meal-edit-button" onClick={() => onEditMeal(meal)} key={meal.id}><MealRow meal={meal} /></button>)
           ) : (
             <EmptyState
@@ -2037,6 +2046,8 @@ function MealsPage({
 }
 
 function MealDialog({
+  draft,
+  onDraft,
   date,
   meal,
   customFoods,
@@ -2046,6 +2057,8 @@ function MealDialog({
   onClose,
   onSave,
 }: {
+  draft?: AppState['mealDraft'];
+  onDraft: (draft: AppState['mealDraft']) => void;
   date: string;
   meal?: Meal;
   customFoods: SavedFood[];
@@ -2055,19 +2068,20 @@ function MealDialog({
   onClose: () => void;
   onSave: (meal: Meal) => void;
 }) {
-  const [type, setType] = useState(meal?.type ?? 'Almoço');
-  const [mode, setMode] = useState<'Catálogo' | 'Rótulo'>('Catálogo');
-  const [foodId, setFoodId] = useState(foodCatalog[0].id);
-  const [foodQuery, setFoodQuery] = useState('');
+  const restoredDraft = useRef(draft?.date === date && draft?.mealId === meal?.id ? draft : undefined).current;
+  const [type, setType] = useState(restoredDraft?.type ?? meal?.type ?? 'Almoço');
+  const [mode, setMode] = useState<'Catálogo' | 'Rótulo'>(restoredDraft?.mode ?? 'Catálogo');
+  const [foodId, setFoodId] = useState(restoredDraft?.foodId ?? foodCatalog[0].id);
+  const [foodQuery, setFoodQuery] = useState(restoredDraft?.foodQuery ?? '');
   const [foodSearchOpen, setFoodSearchOpen] = useState(false);
   const foodSearchRef = useRef<HTMLDivElement>(null);
-  const [grams, setGrams] = useState(100);
-  const [quantityMode, setQuantityMode] = useState<QuantityMode>('g');
-  const [manualName, setManualName] = useState('');
+  const [grams, setGrams] = useState(restoredDraft?.grams ?? 100);
+  const [quantityMode, setQuantityMode] = useState<QuantityMode>(restoredDraft?.quantityMode ?? 'g');
+  const [manualName, setManualName] = useState(restoredDraft?.manualName ?? '');
   const mealScrollRef = useRef<HTMLDivElement>(null);
   const [saveToCatalog, setSaveToCatalog] = useState(false);
   const [editingFoodId, setEditingFoodId] = useState<string | null>(null);
-  const [assistantText, setAssistantText] = useState('');
+  const [assistantText, setAssistantText] = useState(restoredDraft?.assistantText ?? '');
   const [assistantDrafts, setAssistantDrafts] = useState<MealAssistantDraft[]>([]);
   const [assistantMessage, setAssistantMessage] = useState('');
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -2083,7 +2097,7 @@ function MealDialog({
   const [labelScanStatus, setLabelScanStatus] = useState<'idle' | 'reading' | 'done' | 'error'>('idle');
   const [labelScanProgress, setLabelScanProgress] = useState(0);
   const [labelScanMessage, setLabelScanMessage] = useState('');
-  const [manual, setManual] = useState<Record<keyof Nutrients, number | ''>>({
+  const [manual, setManual] = useState<Record<keyof Nutrients, number | ''>>(restoredDraft?.manual ?? {
     calories: '',
     protein: '',
     carbs: '',
@@ -2093,7 +2107,9 @@ function MealDialog({
     iron: '',
     vitaminC: '',
   });
-  const [ingredients, setIngredients] = useState<IngredientEntry[]>(meal?.ingredients ?? []);
+  const [ingredients, setIngredients] = useState<IngredientEntry[]>(restoredDraft?.ingredients ?? meal?.ingredients ?? []);
+  const draftCallback = useRef(onDraft); draftCallback.current = onDraft;
+  useEffect(() => { draftCallback.current({ date, mealId: meal?.id, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, assistantText }); }, [date, meal?.id, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, assistantText]);
   const total = roundNutrients(sumNutrients(ingredients));
   const availableFoods = useMemo<FoodCatalogItem[]>(() => [
     ...customFoods.map((food) => ({ id: food.id, name: food.name, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber, calcium: food.calcium, iron: food.iron, vitaminC: food.vitaminC })),
@@ -2345,13 +2361,17 @@ function MealDialog({
     let worker: Awaited<ReturnType<(typeof import('tesseract.js'))['createWorker']>> | undefined;
     try {
       let text: string;
-      if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('NutritionReader')) {
-        const encoded = await new Promise<string>((resolve, reject) => {
+      const encoded = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result).split(',')[1]);
           reader.onerror = () => reject(new Error('image-read'));
           reader.readAsDataURL(image);
         });
+      setLabelScanMessage('A ler com Gemini…');
+      const remote = await fetch('/api/food-vision', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'label', image: encoded }), signal: AbortSignal.timeout(35000) }).catch(() => null);
+      if (remote?.ok) { text = ((await remote.json()) as { text: string }).text; }
+      else if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('NutritionReader')) {
+        setLabelScanMessage('Gemini indisponível; a usar o leitor local…');
         text = (await NativeNutritionReader.recognize({ image: encoded })).text;
       } else {
       const { createWorker, PSM } = await import('tesseract.js');
@@ -2511,6 +2531,10 @@ function MealDialog({
           </Button>
         </header>
         <div className="dialog-scroll" ref={mealScrollRef}>
+          <FoodPhotoTools onText={(text, kind) => {
+            if (kind === 'food') { setAssistantText(text); setAssistantOpen(true); setAssistantMessage('Estimativa por foto: confirma pesos e procura as correspondências.'); }
+            else { const result = readNutritionLabel(text); if (result.basis !== 'g') throw new Error('Não consegui confirmar valores por 100 g.'); setMode('Rótulo'); setManual({ calories: '', protein: '', carbs: '', fat: '', fiber: '', calcium: '', iron: '', vitaminC: '', ...result.values }); }
+          }} onProduct={(name, values) => { setManualName(name); setMode('Rótulo'); setManual({ calories: '', protein: '', carbs: '', fat: '', fiber: '', calcium: '', iron: '', vitaminC: '', ...values }); }} />
           <section className={`meal-assistant ${assistantOpen ? 'is-open' : 'is-collapsed'}`} aria-labelledby="meal-assistant-title">
             <button
               type="button"
@@ -2600,16 +2624,7 @@ function MealDialog({
           </section>
           <div className="form-grid two">
             <Field label="Tipo de refeição">
-              <select
-                value={type}
-                onChange={(event) => setType(event.target.value)}
-              >
-                {['Pequeno-almoço', 'Almoço', 'Lanche', 'Jantar', 'Ceia'].map(
-                  (item) => (
-                    <option key={item}>{item}</option>
-                  ),
-                )}
-              </select>
+              <div className="meal-type-cards">{['Pequeno-almoço', 'Almoço', 'Lanche', 'Jantar', 'Ceia'].map((item, index) => <button type="button" key={item} aria-pressed={type === item} onClick={() => setType(item)}><span>{['☕', '🍽️', '🍎', '🍲', '🌙'][index]}</span>{item}</button>)}</div>
             </Field>
             <Field label="Modo">
               <div className="segmented">
@@ -2894,11 +2909,11 @@ function MealDialog({
               )}
             </div>
           )}
-          <div className="ingredient-list">
-            <div className="ingredient-head">
+          <details className="ingredient-list">
+            <summary className="ingredient-head">
               <strong>Ingredientes</strong>
               <span>{ingredients.length}</span>
-            </div>
+            </summary>
             {ingredients.map((item) => (
               <div className="ingredient-row" key={item.id}>
                 <div>
@@ -2930,7 +2945,7 @@ function MealDialog({
                 </Button>
               </div>
             ))}
-          </div>
+          </details>
           <div className="nutrition-total">
             <MiniStat
               label="Total"
@@ -3830,7 +3845,7 @@ function CalendarPage({
       return date;
     });
   }
-  const dayMeals = state.meals.filter((meal) => meal.date === selectedDate);
+  const dayMeals = state.meals.filter((meal) => meal.date === selectedDate).sort(mealOrder);
   const nutrients = roundNutrients(
     sumNutrients(dayMeals.flatMap((meal) => meal.ingredients)),
   );
@@ -4039,16 +4054,18 @@ function ProgressPage({
 }) {
   const [weight, setWeight] = useState(state.profile.currentWeightKg);
   const [range, setRange] = useState<ChartRange>('week');
+  const lastRecordedDate = [...state.meals, ...state.weights, ...state.water].map(item => item.date).filter(date => date <= localDateKey()).sort().at(-1) ?? localDateKey();
+  const [chartEnd, setChartEnd] = useState(lastRecordedDate);
   const [entryDate, setEntryDate] = useState(localDateKey());
   const [fat, setFat] = useState<number | ''>(
     state.profile.bodyFatPercent ?? '',
   );
   const rangeDays = range === 'week' ? 7 : range === 'month' ? 30 : 365;
-  const cutoff = new Date();
+  const cutoff = new Date(`${chartEnd}T12:00:00`);
   cutoff.setDate(cutoff.getDate() - (rangeDays - 1));
   const cutoffKey = localDateKey(cutoff);
   const weightData = [...state.weights]
-    .filter((entry) => entry.date >= cutoffKey)
+    .filter((entry) => entry.date >= cutoffKey && entry.date <= chartEnd)
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((entry) => ({
       ...entry,
@@ -4064,7 +4081,7 @@ function ProgressPage({
       ]
     : [state.profile.targetWeightKg - 2, state.profile.targetWeightKg + 2];
   const recentDates = Array.from({ length: range === 'week' ? 7 : 30 }, (_, index) => {
-    const date = new Date();
+    const date = new Date(`${chartEnd}T12:00:00`);
     date.setDate(date.getDate() - ((range === 'week' ? 6 : 29) - index));
     return localDateKey(date);
   });
@@ -4085,7 +4102,7 @@ function ProgressPage({
   });
   const historyData = range === 'year'
     ? Array.from({ length: 12 }, (_, index) => {
-        const month = new Date();
+        const month = new Date(`${chartEnd}T12:00:00`);
         month.setDate(1);
         month.setMonth(month.getMonth() - (11 - index));
         const prefix = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`;
@@ -4174,6 +4191,8 @@ function ProgressPage({
         <div className="chart-controls">
           <span>Período dos gráficos</span>
           <ChartRangePicker value={range} onChange={setRange} />
+          <label>Até <input type="date" value={chartEnd} onChange={event => { if (event.target.value) setChartEnd(event.target.value); }} /></label>
+          <Button variant="ghost" onClick={() => setChartEnd(lastRecordedDate)}>Últimos registos</Button>
         </div>
         <Card className="panel chart-card wide">
           <CardHeader className="panel-heading">
@@ -4183,7 +4202,7 @@ function ProgressPage({
             </div>
           </CardHeader>
           <CardContent>
-            {weightData.length > 1 ? (
+            {weightData.length > 0 ? (
               <ChartContainer
                 className="h-[300px] w-full"
                 config={{
@@ -4250,8 +4269,10 @@ function ProgressPage({
             ) : (
               <EmptyState
                 icon={TrendingDown}
-                title="A tendência aparece com 2 registos"
-                text="Atualiza o peso sempre que quiseres."
+                title="Sem peso neste período"
+                text="Escolhe outro período ou regista uma medição."
+                action={state.weights.length ? 'Ver último peso registado' : undefined}
+                onClick={() => { const last = state.weights.map(item => item.date).sort().at(-1); if (last) setChartEnd(last); }}
               />
             )}
           </CardContent>

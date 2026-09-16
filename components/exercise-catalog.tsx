@@ -41,7 +41,7 @@ export function ExerciseCatalog({ exercises, loading, replacing, onSelect, onClo
     <header className="exercise-catalog-heading">
       <Button type="button" variant="outline" onClick={onClose}><ArrowLeft /> Voltar ao treino</Button>
       <h3>{replacing ? 'Escolher substituição' : 'Catálogo de exercícios'}</h3>
-      <p>Vê a imagem de cada exercício. Toca para ver o movimento.</p>
+      <p>Toca para carregar o GIF. Navegar no catálogo não consome pedidos de imagens.</p>
     </header>
     <div className="exercise-catalog-filters">
       <label htmlFor={searchId}>Pesquisar<Input id={searchId} value={search} placeholder="Ex.: remada, halteres…" onChange={(event) => { setSearch(event.target.value); resetView(); }} /></label>
@@ -90,11 +90,7 @@ function CatalogFilter({ label, options, selected, onChange }: {
 }
 
 function CatalogThumbnail({ exercise }: { exercise: WorkoutExercise }) {
-  const [failed, setFailed] = useState(false);
-  if (!exercise.gifUrl || failed) return <span className="catalog-thumbnail-unavailable">Imagem indisponível</span>;
-  const preview = `${exercise.gifUrl}${exercise.gifUrl.includes('?') ? '&' : '?'}preview=1`;
-  // eslint-disable-next-line @next/next/no-img-element -- the endpoint serves a single unanimated GIF frame.
-  return <img className="catalog-thumbnail" src={preview} alt={`Pré-visualização de ${exercise.name}`} width={360} height={260} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+  return <span className="catalog-thumbnail-unavailable">{exercise.target} · {exercise.equipment}</span>;
 }
 
 function CatalogGif({ exercise }: { exercise: WorkoutExercise }) {

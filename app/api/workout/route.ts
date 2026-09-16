@@ -349,7 +349,7 @@ export async function POST(request: Request) {
     return Response.json({ source: 'WorkoutX', exercises, total: catalogSnapshot.total, complete: true, updatedAt: catalogSnapshot.updatedAt });
   }
 
-  if (body.bodyFocus?.length) {
+  if (focus.length) {
     const exercises = catalogWorkout(focus, body.level ?? 'intermediate', body.equipment);
     if (!exercises.length) return Response.json({ error: 'Não há exercícios para esta combinação. Experimenta outro equipamento.' }, { status: 422 });
     return Response.json({ source: 'WorkoutX', exercises });
