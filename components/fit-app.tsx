@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ExerciseCatalog } from '@/components/exercise-catalog';
 import { FoodPhotoTools } from '@/components/food-photo-tools';
-import { IngredientShortcuts } from '@/components/ingredient-shortcuts';
 import { MealPlanner } from '@/components/meal-planner';
 import { WorkoutProgression } from '@/components/workout-progression';
 import { adaptExercise, exerciseKey, frequentIngredients, ingredientKey, latestExerciseSets } from '@/lib/personal-tracking';
@@ -2109,7 +2108,7 @@ function MealDialog({
   const [assistantText, setAssistantText] = useState(restoredDraft?.assistantText ?? '');
   const [assistantDrafts, setAssistantDrafts] = useState<MealAssistantDraft[]>([]);
   const [assistantMessage, setAssistantMessage] = useState('');
-  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [entryMode, setEntryMode] = useState<'barcode' | 'catalog' | 'assistant' | 'food'>(restoredDraft?.entryMode ?? 'catalog');
   const labelPhotoInput = useRef<HTMLInputElement>(null);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const assistantCache = useRef(new Map<string, string>());
@@ -2135,7 +2134,7 @@ function MealDialog({
   });
   const [ingredients, setIngredients] = useState<IngredientEntry[]>(restoredDraft?.ingredients ?? meal?.ingredients ?? []);
   const draftCallback = useRef(onDraft); draftCallback.current = onDraft;
-  useEffect(() => { draftCallback.current({ date, mealId: meal?.id, planned, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, assistantText }); }, [date, meal?.id, planned, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, assistantText]);
+  useEffect(() => { draftCallback.current({ date, mealId: meal?.id, planned, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, entryMode, assistantText }); }, [date, meal?.id, planned, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, entryMode, assistantText]);
   const total = roundNutrients(sumNutrients(ingredients));
   const availableFoods = useMemo<FoodCatalogItem[]>(() => [
     ...customFoods.map((food) => ({ id: food.id, name: food.name, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber, calcium: food.calcium, iron: food.iron, vitaminC: food.vitaminC })),
@@ -2143,7 +2142,7 @@ function MealDialog({
   ], [customFoods]);
   const selectedFood = availableFoods.find((food) => food.id === foodId);
   const foodUsage = useMemo(() => new Map(frequentIngredients(history).map(item => [ingredientKey(item.ingredient.name), item.count])), [history]);
-  const foodPriority = (name: string) => (favorites.some(item => ingredientKey(item.name) === ingredientKey(name)) ? 100000 : 0) + (foodUsage.get(ingredientKey(name)) ?? 0);
+  const foodPriority = (name: string) => foodUsage.get(ingredientKey(name)) ?? 0;
   const foodMatches = useMemo(() => {
     if (!foodQuery.trim()) return [...availableFoods].sort((a,b) => foodPriority(b.name)-foodPriority(a.name)).slice(0, 8).map((food) => ({ food, score: 0 }));
     return availableFoods
@@ -2151,7 +2150,7 @@ function MealDialog({
       .filter(({ score }) => score > 0)
       .sort(
         (a, b) =>
-          b.score - a.score || foodPriority(b.food.name)-foodPriority(a.food.name) || a.food.name.localeCompare(b.food.name, 'pt'),
+          foodPriority(b.food.name)-foodPriority(a.food.name) || b.score - a.score || a.food.name.localeCompare(b.food.name, 'pt'),
       )
       .slice(0, 10);
   }, [availableFoods, foodQuery, foodUsage, favorites]);
@@ -2372,6 +2371,7 @@ function MealDialog({
   useEffect(() => {
     if (!restoredLabelPhoto || restoredLabelPhotoHandled.current) return;
     restoredLabelPhotoHandled.current = true;
+    setEntryMode('catalog');
     setMode('Rótulo');
     setLabelScanStatus('reading');
     setLabelScanMessage('A recuperar a fotografia da câmara…');
@@ -2554,7 +2554,8 @@ function MealDialog({
     setAssistantText('');
     setAssistantDrafts([]);
     setAssistantMessage(`${recognized.length} ingredientes adicionados à refeição.`);
-    setAssistantOpen(false);
+    setEntryMode('catalog');
+    setMode('Catálogo');
   }
 
   return (
@@ -2576,27 +2577,22 @@ function MealDialog({
         </header>
         <div className="dialog-scroll" ref={mealScrollRef}>
           {planned && <p>Planeada para {date}. Não será contada no consumo até marcares «Já comi».</p>}
-          <IngredientShortcuts meals={history} favorites={favorites} onFavorites={onFavorites} onAdd={item => setIngredients(current => [...current, { ...item, id: uid() }])} />
-          <FoodPhotoTools onLabelPhoto={file => { setMode('Rótulo'); void openLabelCrop(file); }} onText={(text, kind) => {
-            if (kind === 'food') { setAssistantText(text); setAssistantOpen(true); buildAssistantDrafts(text); }
-            else { const result = readNutritionLabel(text); if (result.basis !== 'g') throw new Error('Não consegui confirmar valores por 100 g.'); setMode('Rótulo'); setManual({ calories: '', protein: '', carbs: '', fat: '', fiber: '', calcium: '', iron: '', vitaminC: '', ...result.values }); }
-          }} onProduct={(name, values) => { setManualName(name); setMode('Rótulo'); setManual({ calories: '', protein: '', carbs: '', fat: '', fiber: '', calcium: '', iron: '', vitaminC: '', ...values }); }} />
-          <section className={`meal-assistant ${assistantOpen ? 'is-open' : 'is-collapsed'}`} aria-labelledby="meal-assistant-title">
-            <button
-              type="button"
-              className="meal-assistant-heading"
-              aria-expanded={assistantOpen}
-              aria-controls="meal-assistant-body"
-              onClick={() => setAssistantOpen((current) => !current)}
-            >
-              <span><Sparkles /></span>
-              <div>
-                <strong id="meal-assistant-title">Montar refeição com o assistente</strong>
-                <small>{assistantOpen ? 'Descreve tudo de uma vez e revê as correspondências.' : assistantMessage || 'Toca para descrever o prato completo.'}</small>
+          <div className="meal-entry-options">
+            <Field label="Tipo de refeição">
+              <div className="meal-type-cards">{['Pequeno-almoço', 'Almoço', 'Lanche', 'Jantar', 'Ceia'].map((item, index) => <button type="button" key={item} aria-pressed={type === item} onClick={() => setType(item)}><span>{['☕', '🍽️', '🍎', '🍲', '🌙'][index]}</span>{item}</button>)}</div>
+            </Field>
+            <Field label="Como queres adicionar?">
+              <div className="meal-entry-modes">
+                {([['barcode', '▥', 'Código de barras'], ['catalog', '📖', 'Catálogo'], ['assistant', '✨', 'Assistente'], ['food', '📷', 'Fotografar prato']] as const).map(([value, icon, label]) => <button type="button" key={value} aria-pressed={entryMode === value} onClick={() => { setEntryMode(value); setFoodSearchOpen(false); }}><span aria-hidden="true">{icon}</span>{label}</button>)}
               </div>
-              <ChevronDown className={assistantOpen ? 'rotated' : ''} />
-            </button>
-            {assistantOpen && <div id="meal-assistant-body" className="meal-assistant-body">
+            </Field>
+          </div>
+          {(entryMode === 'barcode' || entryMode === 'food') && <FoodPhotoTools key={entryMode} mode={entryMode} onLabelPhoto={file => { setMode('Rótulo'); void openLabelCrop(file); }} onText={(text, kind) => {
+            if (kind === 'food') { setAssistantText(text); setEntryMode('assistant'); buildAssistantDrafts(text); }
+            else { const result = readNutritionLabel(text); if (result.basis !== 'g') throw new Error('Não consegui confirmar valores por 100 g.'); setMode('Rótulo'); setManual({ calories: '', protein: '', carbs: '', fat: '', fiber: '', calcium: '', iron: '', vitaminC: '', ...result.values }); }
+          }} onProduct={(name, values) => { setManualName(name); setEntryMode('catalog'); setMode('Rótulo'); setManual({ calories: '', protein: '', carbs: '', fat: '', fiber: '', calcium: '', iron: '', vitaminC: '', ...values }); }} />}
+          {entryMode === 'assistant' && <section className="meal-assistant is-open" aria-label="Assistente de refeições">
+            <div className="meal-assistant-body">
               <textarea
                 value={assistantText}
                 rows={3}
@@ -2666,13 +2662,10 @@ function MealDialog({
                 </Button>
                 </div>
               )}
-            </div>}
-          </section>
-          <div className="form-grid two meal-options-grid">
-            <Field label="Tipo de refeição">
-              <div className="meal-type-cards">{['Pequeno-almoço', 'Almoço', 'Lanche', 'Jantar', 'Ceia'].map((item, index) => <button type="button" key={item} aria-pressed={type === item} onClick={() => setType(item)}><span>{['☕', '🍽️', '🍎', '🍲', '🌙'][index]}</span>{item}</button>)}</div>
-            </Field>
-            <Field label="Modo">
+            </div>
+          </section>}
+          {entryMode === 'catalog' && <>
+            <Field label="Catálogo ou rótulo">
               <div className="segmented">
                 <button
                   className={mode === 'Catálogo' ? 'selected' : ''}
@@ -2699,7 +2692,7 @@ function MealDialog({
                 </button>
               </div>
             </Field>
-          </div>
+
           {mode === 'Catálogo' ? (
             <div className="ingredient-input">
               <Field label="Pesquisar alimento">
@@ -2775,7 +2768,8 @@ function MealDialog({
           ) : (
             <div className="manual-food">
               <section className={`label-scanner ${labelScanStatus}`} aria-live="polite">
-                <small>Para ler uma tabela, abre «Fotografar prato, rótulo ou código» e escolhe Rótulo. Apenas valores por 100 g.</small>
+                <FoodPhotoTools mode="label" onLabelPhoto={file => void openLabelCrop(file)} onText={() => undefined} onProduct={() => undefined} />
+                <small>Apenas valores por 100 g. Também podes preencher os campos manualmente.</small>
                 {labelScanStatus === 'reading' && <Progress value={labelScanProgress} />}
                 {labelScanMessage && <small className="label-scan-message">{labelScanMessage}</small>}
               </section>
@@ -2926,6 +2920,7 @@ function MealDialog({
               )}
             </div>
           )}
+          </>}
           <details className="ingredient-list">
             <summary className="ingredient-head">
               <strong>Ingredientes</strong>

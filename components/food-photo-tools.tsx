@@ -3,9 +3,8 @@ import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { LabelCamera } from '@/components/label-camera';
 
-export function FoodPhotoTools({ onText, onProduct, onLabelPhoto }: { onText: (text: string, mode: 'label' | 'food') => void; onProduct: (name: string, values: Record<string, number>) => void; onLabelPhoto: (file: File) => void }) {
+export function FoodPhotoTools({ mode, onText, onProduct, onLabelPhoto }: { mode: 'label' | 'food' | 'barcode'; onText: (text: string, mode: 'label' | 'food') => void; onProduct: (name: string, values: Record<string, number>) => void; onLabelPhoto: (file: File) => void }) {
   const input = useRef<HTMLInputElement>(null);
-  const [mode, setMode] = useState<'label' | 'food' | 'barcode'>('food');
   const [camera, setCamera] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -35,12 +34,11 @@ export function FoodPhotoTools({ onText, onProduct, onLabelPhoto }: { onText: (t
       onText(data.text, mode); setMessage(mode === 'food' ? 'Porções estimadas. Revê os alimentos e pesos no assistente antes de adicionar.' : 'Confirma os valores preenchidos antes de adicionar.');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Falha na leitura.'); } finally { bitmap?.close(); setBusy(false); if (input.current) input.current.value = ''; }
   }
-  return <details className="food-photo-tools"><summary>📷 Fotografar prato, rótulo ou código</summary>
-    <p>A análise com Gemini envia a foto à Google. Revê sempre os resultados; as porções são estimadas.</p>
-    <div className="segmented">{([['food', 'Prato'], ['label', 'Rótulo'], ['barcode', 'Código de barras']] as const).map(([value, label]) => <button type="button" key={value} disabled={busy} className={mode === value ? 'selected' : ''} onClick={() => setMode(value)}>{label}</button>)}</div>
+  return <section className="food-photo-tools" aria-label={mode === 'barcode' ? 'Ler código de barras' : mode === 'label' ? 'Ler tabela nutricional' : 'Fotografar prato'}>
+    <p>{mode === 'barcode' ? 'Fotografa o código de barras para procurar o produto. Também podes usar uma foto da galeria.' : mode === 'label' ? 'Fotografa a tabela nutricional ou escolhe uma foto. Revê os valores reconhecidos pelo Gemini.' : 'A análise com Gemini envia a foto à Google. Revê os alimentos e as porções estimadas.'}</p>
     <div className="photo-action-grid"><Button type="button" disabled={busy} onClick={() => setCamera(true)}>📷 Fotografar</Button><Button type="button" variant="outline" disabled={busy} onClick={() => input.current?.click()}>🖼️ Galeria</Button></div>
     <input ref={input} type="file" accept="image/*" hidden onChange={event => { if (event.target.files?.[0]) void photo(event.target.files[0]); }} />
     {mode === 'barcode' && <label>Código do produto<input inputMode="numeric" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} /><Button type="button" disabled={busy || !/^\d{8,14}$/.test(code)} onClick={() => void lookup(code)}>Procurar</Button></label>}
     {message && <p role="status">{message}</p>}{camera && <LabelCamera onClose={() => setCamera(false)} onPhoto={file => void photo(file)} />}
-  </details>;
+  </section>;
 }
