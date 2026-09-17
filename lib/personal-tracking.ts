@@ -17,9 +17,11 @@ export function shoppingList(meals: Meal[]) {
   }
   return [...totals.values()].map(item => ({ ...item, grams: Math.round(item.grams * 10) / 10 })).sort((a, b) => a.name.localeCompare(b.name, 'pt'));
 }
-export function latestExerciseSets(exercise: WorkoutExercise, sessions: WorkoutSession[], beforeDate = '9999-12-31') {
+export function latestExerciseSets(exercise: WorkoutExercise, sessions: WorkoutSession[], beforeDate = '9999-12-31', planId?: string) {
   const key = exerciseKey(exercise);
-  for (const session of [...sessions].filter(item => item.date <= beforeDate).reverse().sort((a, b) => b.date.localeCompare(a.date))) {
+  const recent = [...sessions].filter(item => item.date <= beforeDate).reverse().sort((a, b) => b.date.localeCompare(a.date));
+  const candidates = planId ? [...recent.filter(item => item.planId === planId), ...recent.filter(item => item.planId !== planId)] : recent;
+  for (const session of candidates) {
     const sets = session.exercises?.filter(item => item.key === key).flatMap(item => item.sets).filter(set => Number.isFinite(set.load) && set.load >= 0 && Number.isFinite(set.reps) && set.reps > 0);
     if (sets?.length) return sets;
   }

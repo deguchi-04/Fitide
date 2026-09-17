@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ExerciseCatalog } from '@/components/exercise-catalog';
 import { FoodPhotoTools } from '@/components/food-photo-tools';
-import { MealPlanner } from '@/components/meal-planner';
+import { ProgressCharts } from '@/components/progress-charts';
 import { WorkoutProgression } from '@/components/workout-progression';
 import { adaptExercise, exerciseKey, frequentIngredients, ingredientKey, latestExerciseSets } from '@/lib/personal-tracking';
 import { readNutritionLabel } from '@/lib/nutrition-label';
@@ -2026,7 +2026,6 @@ function MealsPage({
           value={`${consumed.carbs.toFixed(1)} g`}
         />
       </section>
-      <MealPlanner state={state} setState={setState} date={date} onCreate={onPlan} onEdit={onEditPlan} />
       <div className="meal-list">
         {meals.length ? (
           meals.map((meal) => (
@@ -3051,7 +3050,7 @@ function WorkoutPage({
 
   function startWorkout(plan: WorkoutPlan) {
     if (activePlan) { setMinimized(false); return; }
-    const remembered = (exercise: WorkoutExercise, index: number) => { const sets = state.reuseWorkoutPerformance === false ? [] : latestExerciseSets(exercise, state.workoutSessions, date); return sets.length ? sets[Math.min(index, sets.length - 1)] : { load: exercise.weightKg ?? 0, reps: Number.parseInt(exercise.reps, 10) || 12 }; };
+    const remembered = (exercise: WorkoutExercise, index: number) => { const sets = latestExerciseSets(exercise, state.workoutSessions, date, plan.id); return sets.length ? sets[Math.min(index, sets.length - 1)] : { load: exercise.weightKg ?? 0, reps: Number.parseInt(exercise.reps, 10) || 12 }; };
     prepareWorkoutSound();
     setMinimized(false);
     setElapsed(0);
@@ -4061,95 +4060,10 @@ function CalendarPage({
   );
 }
 
-function ProgressPage({
-  state,
-  setState,
-}: {
-  state: AppState;
-  setState: React.Dispatch<React.SetStateAction<AppState>>;
-}) {
+function ProgressPage({ state, setState }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>> }) {
   const [weight, setWeight] = useState(state.profile.currentWeightKg);
-  const [range, setRange] = useState<ChartRange>('week');
-  const lastRecordedDate = [...state.meals, ...state.weights, ...state.water].map(item => item.date).filter(date => date <= localDateKey()).sort().at(-1) ?? localDateKey();
-  const [chartEnd, setChartEnd] = useState(lastRecordedDate);
   const [entryDate, setEntryDate] = useState(localDateKey());
-  const [fat, setFat] = useState<number | ''>(
-    state.profile.bodyFatPercent ?? '',
-  );
-  const rangeDays = range === 'week' ? 7 : range === 'month' ? 30 : 365;
-  const cutoff = new Date(`${chartEnd}T12:00:00`);
-  cutoff.setDate(cutoff.getDate() - (rangeDays - 1));
-  const cutoffKey = localDateKey(cutoff);
-  const weightData = [...state.weights]
-    .filter((entry) => entry.date >= cutoffKey && entry.date <= chartEnd)
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map((entry) => ({
-      ...entry,
-      label: new Date(`${entry.date}T12:00:00`).toLocaleDateString('pt-PT', {
-        day: '2-digit',
-        month: 'short',
-      }),
-    }));
-  const weightChartDomain: [number, number] = weightData.length
-    ? [
-        Math.floor(Math.min(state.profile.targetWeightKg, ...weightData.map((entry) => entry.weightKg)) - 2),
-        Math.ceil(Math.max(state.profile.targetWeightKg, ...weightData.map((entry) => entry.weightKg)) + 2),
-      ]
-    : [state.profile.targetWeightKg - 2, state.profile.targetWeightKg + 2];
-  const recentDates = Array.from({ length: range === 'week' ? 7 : 30 }, (_, index) => {
-    const date = new Date(`${chartEnd}T12:00:00`);
-    date.setDate(date.getDate() - ((range === 'week' ? 6 : 29) - index));
-    return localDateKey(date);
-  });
-  const dailyHistory = recentDates.map((date) => {
-    const nutrients = sumNutrients(
-      state.meals
-        .filter((meal) => meal.date === date)
-        .flatMap((meal) => meal.ingredients),
-    );
-    return {
-      date,
-      label: new Date(`${date}T12:00:00`).toLocaleDateString('pt-PT', range === 'week' ? { weekday: 'short' } : { day: '2-digit', month: '2-digit' }).slice(0, range === 'week' ? 3 : undefined),
-      protein: Math.round(nutrients.protein),
-      carbs: Math.round(nutrients.carbs),
-      fat: Math.round(nutrients.fat),
-      water: state.water.find((entry) => entry.date === date)?.liters ?? 0,
-    };
-  });
-  const historyData = range === 'year'
-    ? Array.from({ length: 12 }, (_, index) => {
-        const month = new Date(`${chartEnd}T12:00:00`);
-        month.setDate(1);
-        month.setMonth(month.getMonth() - (11 - index));
-        const prefix = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`;
-        const nutrients = sumNutrients(state.meals.filter((meal) => meal.date.startsWith(prefix)).flatMap((meal) => meal.ingredients));
-        return {
-          date: prefix,
-          label: month.toLocaleDateString('pt-PT', { month: 'short' }).slice(0, 3),
-          protein: Math.round(nutrients.protein),
-          carbs: Math.round(nutrients.carbs),
-          fat: Math.round(nutrients.fat),
-          water: Math.round(state.water.filter((entry) => entry.date.startsWith(prefix)).reduce((sum, entry) => sum + entry.liters, 0) * 1000) / 1000,
-        };
-      })
-    : dailyHistory;
-  const goalPeriodMultiplier = range === 'year' ? 30.4 : 1;
-  const proteinGoal = Math.round(state.goals.proteinG * goalPeriodMultiplier);
-  const carbsGoal = Math.round(state.goals.carbsG * goalPeriodMultiplier);
-  const fatGoal = Math.round(state.goals.fatG * goalPeriodMultiplier);
-  const waterGoal = Math.round(state.goals.waterLiters * goalPeriodMultiplier * 10) / 10;
-  const macroChartMaximum = Math.ceil(
-    Math.max(
-      proteinGoal,
-      carbsGoal,
-      fatGoal,
-      ...historyData.flatMap((entry) => [entry.protein, entry.carbs, entry.fat]),
-    ) * 1.12,
-  );
-  const waterChartMaximum = Math.ceil(
-    Math.max(waterGoal, ...historyData.map((entry) => entry.water)) * 1.12 * 10,
-  ) / 10;
-  const periodLabel = range === 'week' ? 'semana' : range === 'month' ? 'mês' : 'ano';
+  const [fat, setFat] = useState<number | ''>(state.profile.bodyFatPercent ?? '');
   function addWeight(event: React.FormEvent) {
     event.preventDefault();
     const date = entryDate;
@@ -4169,19 +4083,11 @@ function ProgressPage({
       weights: [...current.weights.filter((item) => item.date !== date), entry],
     }));
   }
-  return (
-    <div className="content-page page-enter">
-      <section className="page-intro">
-        <div>
-          <p className="eyebrow">EVOLUÇÃO</p>
-          <h2>Progresso sem ruído</h2>
-          <p>
-            Observa tendências de peso, gordura, macros e hidratação ao longo do
-            tempo.
-          </p>
-        </div>
-      </section>
-      <div className="progress-stats">
+
+  return <div className="content-page page-enter">
+    <section className="page-intro"><div><p className="eyebrow">EVOLUÇÃO</p><h2>Progresso sem ruído</h2><p>Peso ao longo do ano. Nutrição e água, dia a dia.</p></div></section>
+    <div className="charts-grid progress-widgets">
+      <div className="progress-stats wide" data-widget-id="progress-stats-v2">
         <MiniStat
           label="Peso atual"
           value={`${state.profile.currentWeightKg.toFixed(1)} kg`}
@@ -4203,102 +4109,11 @@ function ProgressPage({
           }
         />
       </div>
-      <WorkoutProgression state={state} setState={setState} />
-      <div className="charts-grid">
-        <div className="chart-controls">
-          <span>Período dos gráficos</span>
-          <ChartRangePicker value={range} onChange={setRange} />
-          <label>Até <input type="date" value={chartEnd} onChange={event => { if (event.target.value) setChartEnd(event.target.value); }} /></label>
-          <Button variant="ghost" onClick={() => setChartEnd(lastRecordedDate)}>Últimos registos</Button>
-        </div>
-        <Card className="panel chart-card wide">
-          <CardHeader className="panel-heading">
-            <div>
-              <p className="eyebrow">COMPOSIÇÃO</p>
-              <CardTitle>Peso e gordura corporal</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {weightData.length > 0 ? (
-              <ChartContainer
-                className="h-[300px] w-full"
-                config={{
-                  weightKg: { label: 'Peso (kg)', color: '#168fbd' },
-                  bodyFatPercent: { label: 'Gordura (%)', color: '#ef6f4c' },
-                }}
-              >
-                <AreaChart data={weightData} margin={{ left: -15, right: 12 }}>
-                  <defs>
-                    <linearGradient id="weightFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop
-                        offset="5%"
-                        stopColor="var(--color-weightKg)"
-                        stopOpacity={0.3}
-                      />
-                      <stop
-                        offset="95%"
-                        stopColor="var(--color-weightKg)"
-                        stopOpacity={0}
-                      />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid vertical={false} />
-                  <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                  <YAxis
-                    domain={weightChartDomain}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <ReferenceLine
-                    y={state.profile.targetWeightKg}
-                    stroke="#e5483f"
-                    strokeOpacity={0.42}
-                    strokeWidth={2}
-                    strokeDasharray="7 6"
-                    label={{
-                      value: `Objetivo ${state.profile.targetWeightKg.toFixed(1)} kg`,
-                      position: 'insideTopRight',
-                      fill: '#e5483f',
-                      fontSize: 11,
-                      fontWeight: 750,
-                    }}
-                  />
-                  <Area
-                    dataKey="weightKg"
-                    type="monotone"
-                    stroke="var(--color-weightKg)"
-                    fill="url(#weightFill)"
-                    strokeWidth={3}
-                    dot={{ r: 4, fill: 'var(--color-weightKg)', stroke: '#fff', strokeWidth: 2 }}
-                    activeDot={{ r: 5, fill: 'var(--color-weightKg)', stroke: '#fff', strokeWidth: 2 }}
-                  />
-                  <Area
-                    dataKey="bodyFatPercent"
-                    type="monotone"
-                    stroke="var(--color-bodyFatPercent)"
-                    fill="transparent"
-                    strokeWidth={2}
-                    connectNulls
-                  />
-                </AreaChart>
-              </ChartContainer>
-            ) : (
-              <EmptyState
-                icon={TrendingDown}
-                title="Sem peso neste período"
-                text="Escolhe outro período ou regista uma medição."
-                action={state.weights.length ? 'Ver último peso registado' : undefined}
-                onClick={() => { const last = state.weights.map(item => item.date).sort().at(-1); if (last) setChartEnd(last); }}
-              />
-            )}
-          </CardContent>
-        </Card>
-        <Card className="panel weight-form">
+        <Card className="panel weight-form wide" data-widget-id="progress-weight-form-v2">
           <CardHeader>
             <CardTitle>Registar peso</CardTitle>
             <CardDescription>
-              O registo de hoje substitui outro feito na mesma data.
+              Um registo substitui outro feito na mesma data.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -4324,85 +4139,11 @@ function ProgressPage({
             </form>
           </CardContent>
         </Card>
-        <Card className="panel chart-card">
-          <CardHeader>
-              <CardTitle>Macros · {periodLabel}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="chart-goals-legend" aria-label="Metas de macronutrientes">
-              <span><i />Proteína <strong>{proteinGoal} g</strong></span>
-              <span><i />Hidratos <strong>{carbsGoal} g</strong></span>
-              <span><i />Gordura <strong>{fatGoal} g</strong></span>
-            </div>
-            <ChartContainer
-              className="h-[240px] w-full"
-              config={{
-                protein: { label: 'Proteína', color: '#168fbd' },
-                carbs: { label: 'Hidratos', color: '#ef6f4c' },
-                fat: { label: 'Gordura', color: '#13805f' },
-              }}
-            >
-              <BarChart data={historyData}>
-                <CartesianGrid vertical={false} />
-                <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                <YAxis domain={[0, macroChartMaximum]} tickLine={false} axisLine={false} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <ReferenceLine y={proteinGoal} stroke="#e5483f" strokeOpacity={0.38} strokeWidth={1.5} strokeDasharray="7 6" />
-                <ReferenceLine y={carbsGoal} stroke="#e5483f" strokeOpacity={0.38} strokeWidth={1.5} strokeDasharray="7 6" />
-                <ReferenceLine y={fatGoal} stroke="#e5483f" strokeOpacity={0.38} strokeWidth={1.5} strokeDasharray="7 6" />
-                <Bar
-                  dataKey="protein"
-                  fill="var(--color-protein)"
-                  radius={[5, 5, 0, 0]}
-                />
-                <Bar
-                  dataKey="carbs"
-                  fill="var(--color-carbs)"
-                  radius={[5, 5, 0, 0]}
-                />
-                <Bar
-                  dataKey="fat"
-                  fill="var(--color-fat)"
-                  radius={[5, 5, 0, 0]}
-                />
-              </BarChart>
-            </ChartContainer>
-          </CardContent>
-        </Card>
-        <Card className="panel chart-card">
-          <CardHeader>
-            <CardTitle>Água · {periodLabel}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ChartContainer
-              className="h-[240px] w-full"
-              config={{ water: { label: 'Água (L)', color: '#65a9c7' } }}
-            >
-              <BarChart data={historyData}>
-                <CartesianGrid vertical={false} />
-                <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                <YAxis domain={[0, waterChartMaximum]} tickLine={false} axisLine={false} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <ReferenceLine
-                  y={waterGoal}
-                  stroke="#e5483f"
-                  strokeOpacity={0.42}
-                  strokeWidth={2}
-                  strokeDasharray="7 6"
-                  label={{ value: `Meta ${waterGoal.toLocaleString('pt-PT')} L`, position: 'insideTopRight', fill: '#e5483f', fontSize: 10 }}
-                />
-                <Bar
-                  dataKey="water"
-                  fill="var(--color-water)"
-                  radius={[7, 7, 0, 0]}
-                />
-              </BarChart>
-            </ChartContainer>
-          </CardContent>
-        </Card>
-      </div>
+
+      <ProgressCharts state={state} today={localDateKey()} />
+      <WorkoutProgression state={state} setState={setState} />
     </div>
-  );
+  </div>;
 }
 
 function HealthConnectPanel({
@@ -4582,7 +4323,7 @@ function SettingsPage({
         days: scheduleMode === 'routine' ? [...days] : [],
         specificDate: scheduleMode === 'single' ? singleDate : undefined,
         time: activityTime,
-        exercises: state.reuseWorkoutPerformance === false ? result.exercises : result.exercises.map(exercise => adaptExercise(exercise, state.workoutSessions)),
+        exercises: result.exercises.map(exercise => adaptExercise(exercise, state.workoutSessions)),
       };
       const activity: Activity = {
         id: activityId,
