@@ -11,6 +11,7 @@ import { readNutritionLabel } from '@/lib/nutrition-label';
 import { WidgetReorderButton } from '@/components/widget-reorder';
 import ReactCrop, { type PercentCrop, type PixelCrop } from 'react-image-crop';
 import {
+  Star, StarOutline, Barcode,
   Activity as ActivityIcon,
   Apple,
   ArrowLeft,
@@ -46,7 +47,7 @@ import {
   Utensils,
   Waves,
   X,
-} from 'lucide-react';
+} from '@/components/material-icons';
 import {
   Area,
   AreaChart,
@@ -2577,14 +2578,14 @@ function MealDialog({
         <div className="dialog-scroll" ref={mealScrollRef}>
           {planned && <p>Planeada para {date}. Não será contada no consumo até marcares «Já comi».</p>}
           <div className="meal-entry-options">
-            <Field label="Tipo de refeição">
+            <div className="field" role="group" aria-label="Tipo de refeição"><span>Tipo de refeição</span>
               <div className="meal-type-cards">{['Pequeno-almoço', 'Almoço', 'Lanche', 'Jantar', 'Ceia'].map((item, index) => <button type="button" key={item} aria-pressed={type === item} onClick={() => setType(item)}><span>{['☕', '🍽️', '🍎', '🍲', '🌙'][index]}</span>{item}</button>)}</div>
-            </Field>
-            <Field label="Como queres adicionar?">
+            </div>
+            <div className="field" role="group" aria-label="Como queres adicionar?"><span>Como queres adicionar?</span>
               <div className="meal-entry-modes">
-                {([['barcode', '▥', 'Código de barras'], ['catalog', '📖', 'Catálogo'], ['assistant', '✨', 'Assistente'], ['food', '📷', 'Fotografar prato']] as const).map(([value, icon, label]) => <button type="button" key={value} aria-pressed={entryMode === value} onClick={() => { setEntryMode(value); setFoodSearchOpen(false); }}><span aria-hidden="true">{icon}</span>{label}</button>)}
+                {([['barcode', Barcode, 'Código de barras'], ['catalog', BookOpen, 'Catálogo'], ['assistant', Sparkles, 'Assistente'], ['food', Camera, 'Fotografar prato']] as const).map(([value, Icon, label]) => <button type="button" key={value} aria-pressed={entryMode === value} onClick={() => { setEntryMode(value); setFoodSearchOpen(false); }}><span aria-hidden="true"><Icon /></span>{label}</button>)}
               </div>
-            </Field>
+            </div>
           </div>
           {(entryMode === 'barcode' || entryMode === 'food') && <FoodPhotoTools key={entryMode} mode={entryMode} onLabelPhoto={file => { setMode('Rótulo'); void openLabelCrop(file); }} onText={(text, kind) => {
             if (kind === 'food') { setAssistantText(text); setEntryMode('assistant'); buildAssistantDrafts(text); }
@@ -2920,7 +2921,7 @@ function MealDialog({
             </div>
           )}
           </>}
-          <details className="ingredient-list">
+          <details className="ingredient-list" open>
             <summary className="ingredient-head">
               <strong>Ingredientes</strong>
               <span>{ingredients.length}</span>
@@ -2929,9 +2930,10 @@ function MealDialog({
               <div className="ingredient-row" key={item.id}>
                 <div>
                   <strong>{item.name}</strong>
-                  <Button type="button" variant="ghost" aria-label={`Favorito ${item.name}`} aria-pressed={favorites.some(f => ingredientKey(f.name) === ingredientKey(item.name))} onClick={() => onFavorites(favorites.some(f => ingredientKey(f.name) === ingredientKey(item.name)) ? favorites.filter(f => ingredientKey(f.name) !== ingredientKey(item.name)) : [...favorites, item])}>{favorites.some(f => ingredientKey(f.name) === ingredientKey(item.name)) ? '★ Favorito' : '☆ Guardar favorito'}</Button>
+                  <Button type="button" variant="ghost" className="ingredient-favorite" size="icon" title="Guardar favorito" aria-label={`Favorito ${item.name}`} aria-pressed={favorites.some(f => ingredientKey(f.name) === ingredientKey(item.name))} onClick={() => onFavorites(favorites.some(f => ingredientKey(f.name) === ingredientKey(item.name)) ? favorites.filter(f => ingredientKey(f.name) !== ingredientKey(item.name)) : [...favorites, item])}>{favorites.some(f => ingredientKey(f.name) === ingredientKey(item.name)) ? <Star /> : <StarOutline />}</Button>
                   <div className="ingredient-weight-edit">
                     <NumberInput
+                      compact
                       value={item.grams}
                       min={0}
                       max={Math.max(5000, item.grams)}
@@ -2939,7 +2941,7 @@ function MealDialog({
                       ariaLabel={`Peso de ${item.name} (g)`}
                       onChange={(grams) => setIngredients((current) => current.map((entry) => entry.id === item.id ? updateIngredientWeight(entry, grams) : entry))}
                     />
-                    <span>g <Pencil size={14} aria-hidden="true" /></span>
+
                   </div>
                 </div>
                 <span>{Math.round(item.calories)} kcal</span>
@@ -5152,6 +5154,7 @@ function NumberInput({
   onUnitChange,
   onConfirm,
   decimalPlaces,
+  compact = false,
 }: {
   value: number | '';
   onChange: (value: number, unit?: QuantityMode) => void;
@@ -5164,6 +5167,7 @@ function NumberInput({
   onUnitChange?: (unit: QuantityMode) => void;
   onConfirm?: (value: number, unit?: QuantityMode) => void;
   decimalPlaces?: number;
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [draftUnit, setDraftUnit] = useState<QuantityMode>(unit ?? unitOptions?.[0]?.value ?? 'g');
@@ -5270,7 +5274,7 @@ function NumberInput({
     <>
       <button
         type="button"
-        className="number-picker-trigger"
+        className={compact ? "number-picker-trigger compact-weight" : "number-picker-trigger"}
         aria-label={ariaLabel}
         onClick={(event) => {
           event.currentTarget.blur();
@@ -5288,7 +5292,7 @@ function NumberInput({
         }}
       >
         <span>{value === '' ? '—' : `${formatNumber(value, committedPrecision)}${triggerSuffix ? ` ${triggerSuffix}` : ''}`}</span>
-        <small>deslizar ou escrever</small>
+        {compact ? <><span>g</span><Pencil size={18} /></> : <small>deslizar ou escrever</small>}
       </button>
       {open && (
         <OverlayPortal><div

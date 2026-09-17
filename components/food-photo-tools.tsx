@@ -1,6 +1,8 @@
 'use client';
 import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Camera, ImageIcon } from '@/components/material-icons';
+import { Input } from '@/components/ui/input';
 import { LabelCamera } from '@/components/label-camera';
 
 export function FoodPhotoTools({ mode, onText, onProduct, onLabelPhoto }: { mode: 'label' | 'food' | 'barcode'; onText: (text: string, mode: 'label' | 'food') => void; onProduct: (name: string, values: Record<string, number>) => void; onLabelPhoto: (file: File) => void }) {
@@ -36,9 +38,9 @@ export function FoodPhotoTools({ mode, onText, onProduct, onLabelPhoto }: { mode
   }
   return <section className="food-photo-tools" aria-label={mode === 'barcode' ? 'Ler código de barras' : mode === 'label' ? 'Ler tabela nutricional' : 'Fotografar prato'}>
     <p>{mode === 'barcode' ? 'Fotografa o código de barras para procurar o produto. Também podes usar uma foto da galeria.' : mode === 'label' ? 'Fotografa a tabela nutricional ou escolhe uma foto. Revê os valores reconhecidos pelo Gemini.' : 'A análise com Gemini envia a foto à Google. Revê os alimentos e as porções estimadas.'}</p>
-    <div className="photo-action-grid"><Button type="button" disabled={busy} onClick={() => setCamera(true)}>📷 Fotografar</Button><Button type="button" variant="outline" disabled={busy} onClick={() => input.current?.click()}>🖼️ Galeria</Button></div>
+    <div className="photo-action-grid"><Button type="button" disabled={busy} onClick={() => setCamera(true)}><Camera /> Fotografar</Button><Button type="button" variant="outline" disabled={busy} onClick={() => input.current?.click()}><ImageIcon /> Galeria</Button></div>
     <input ref={input} type="file" accept="image/*" hidden onChange={event => { if (event.target.files?.[0]) void photo(event.target.files[0]); }} />
-    {mode === 'barcode' && <label>Código do produto<input inputMode="numeric" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} /><Button type="button" disabled={busy || !/^\d{8,14}$/.test(code)} onClick={() => void lookup(code)}>Procurar</Button></label>}
-    {message && <p role="status">{message}</p>}{camera && <LabelCamera onClose={() => setCamera(false)} onPhoto={file => void photo(file)} />}
+    {mode === 'barcode' && <div className="barcode-lookup"><label htmlFor="barcode-product-code">Código do produto</label><div className="barcode-lookup-fields"><Input id="barcode-product-code" placeholder="Ex.: 5601234567890" autoComplete="off" inputMode="numeric" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} /><Button type="button" disabled={busy || !/^\d{8,14}$/.test(code)} onClick={() => void lookup(code)}>Procurar</Button></div></div>}
+    {message && <p role="status">{message}</p>}{camera && <LabelCamera title={mode === "barcode" ? "Fotografar código de barras" : mode === "food" ? "Fotografar prato" : "Fotografar rótulo"} onClose={() => setCamera(false)} onPhoto={file => void photo(file)} />}
   </section>;
 }

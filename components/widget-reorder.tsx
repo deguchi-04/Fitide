@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, GripVertical, RotateCcw } from 'lucide-react';
+import { Check, GripVertical, RotateCcw } from '@/components/material-icons';
 import { Button } from '@/components/ui/button';
 
 type Widget = { id: string; label: string; element: HTMLElement };

@@ -1,7 +1,7 @@
 'use client';
 
 import { useId, useMemo, useState } from 'react';
-import { ArrowLeft, Check, CirclePlay, LoaderCircle, Plus, X } from 'lucide-react';
+import { ArrowLeft, Check, CirclePlay, LoaderCircle, Plus, X } from '@/components/material-icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { workoutGroups, exerciseGroups } from '@/lib/workout-groups';

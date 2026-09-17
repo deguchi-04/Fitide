@@ -1,11 +1,12 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogPortal, DialogOverlay, DialogClose, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
 import { Button } from '@/components/ui/button';
 
 type CameraCapabilities = MediaTrackCapabilities & { focusMode?: string[]; focusDistance?: { min: number; max: number; step: number }; zoom?: { min: number; max: number; step: number } };
 
-export function LabelCamera({ onPhoto, onClose }: { onPhoto: (file: File) => void; onClose: () => void }) {
+export function LabelCamera({ onPhoto, onClose, title = "Fotografar rótulo" }: { title?: string; onPhoto: (file: File) => void; onClose: () => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const [ready, setReady] = useState(false);
@@ -57,14 +58,14 @@ export function LabelCamera({ onPhoto, onClose }: { onPhoto: (file: File) => voi
     } catch { setError('Não consegui capturar a imagem. Tenta novamente.'); setBusy(false); }
   }
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
-    <DialogContent style={{ zIndex: 10001, maxWidth: 560, maxHeight: '92dvh', overflowY: 'auto' }}>
-      <DialogTitle>Fotografar rótulo</DialogTitle>
+    <DialogPortal><DialogOverlay className="camera-scrim" /><DialogPrimitive.Popup className="camera-dialog">
+      <DialogTitle>{title}</DialogTitle>
       <DialogDescription>Foco automático. Mantém alguma distância e espera até o texto ficar nítido.</DialogDescription>
       {cameras.length > 1 && <label>Câmara<select aria-label="Escolher câmara" value={cameraId} onChange={event => setCameraId(event.target.value)}><option value="">Traseira automática</option>{cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>{camera.label || `Câmara ${index + 1}`}</option>)}</select></label>}
       <video ref={video} autoPlay muted playsInline onLoadedData={() => setReady(true)} style={{ width: '100%', maxHeight: '48dvh', objectFit: 'contain', background: '#111' }} />
       {error && <p role="alert">{error}</p>}
       <Button disabled={!ready || busy} onClick={() => void capture()}>{busy ? 'A preparar…' : 'Tirar fotografia'}</Button>
-      <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-    </DialogContent>
+      <DialogClose render={<Button variant="ghost" />}>Cancelar</DialogClose>
+    </DialogPrimitive.Popup></DialogPortal>
   </Dialog>;
 }
