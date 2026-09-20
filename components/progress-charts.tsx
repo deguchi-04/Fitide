@@ -4,10 +4,11 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, Referen
 import { ChevronLeft, ChevronRight, Maximize2, X } from '@/components/material-icons';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
+import { Dialog, DialogPortal, DialogOverlay, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import type { AppState } from '@/lib/fit-types';
-import { nutritionDays, shiftDate, weekStart, type NutritionWindow } from '@/lib/progress-data';
+import { nutritionDays, weightHistory, measurementDomain, shiftDate, weekStart, type NutritionWindow } from '@/lib/progress-data';
 
 const shortDate = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
 function ChartPanel({ title, id, children }: { title: string; id: string; children: (expanded: boolean) => ReactNode }) {
@@ -21,34 +22,30 @@ function ChartPanel({ title, id, children }: { title: string; id: string; childr
   return <Card className="panel chart-card wide" data-widget-id={id}>
     <CardHeader className="chart-panel-header"><CardTitle>{title}</CardTitle><Button variant="ghost" size="icon" aria-label={`Expandir ${title}`} onClick={() => setExpanded(true)}><Maximize2 /></Button></CardHeader>
     <CardContent>{children(false)}</CardContent>
-    <Dialog open={expanded} onOpenChange={setExpanded}><DialogContent className="progress-fullscreen" showCloseButton={false}>
+    <Dialog open={expanded} onOpenChange={setExpanded}><DialogPortal><DialogOverlay /><DialogPrimitive.Popup className="progress-chart-modal">
       <header className="chart-panel-header"><DialogTitle>{title}</DialogTitle><Button variant="ghost" size="icon" aria-label="Fechar gráfico" onClick={() => setExpanded(false)}><X /></Button></header>
       <DialogDescription className="sr-only">Gráfico ampliado com os mesmos dados e controlos.</DialogDescription>
       {expanded && children(true)}
-    </DialogContent></Dialog>
+    </DialogPrimitive.Popup></DialogPortal></Dialog>
   </Card>;
 }
 
 export function ProgressCharts({ state, today }: { state: AppState; today: string }) {
-  const lastWeight = state.weights.map(item => item.date).filter(date => date <= today).sort().at(-1) ?? today;
-  const [weightWeek, setWeightWeek] = useState(weekStart(lastWeight));
-  const [weightWindow, setWeightWindow] = useState<NutritionWindow>('year');
   const lastNutrition = [...state.meals, ...state.water].map(item => item.date).filter(date => date <= today).sort().at(-1) ?? today;
   const [endWeek, setEndWeek] = useState(weekStart(lastNutrition));
   const [window, setWindow] = useState<NutritionWindow>('week');
   const [waterWeek, setWaterWeek] = useState(weekStart(lastNutrition));
   const [waterWindow, setWaterWindow] = useState<NutritionWindow>('week');
   const swipe = useRef<{ x: number; y: number } | null>(null);
-  const weight = nutritionDays(state, weightWeek, weightWindow).map(({ date }) => {
-    const measurement = state.weights.filter(item => item.date === date).at(-1);
-    return { date, weightKg: measurement?.weightKg ?? null, bodyFatPercent: measurement?.bodyFatPercent ?? null };
-  });
+  const weight = weightHistory(state.weights, today);
+  const weightDomain = measurementDomain(weight.map(item => item.weightKg));
+  const fatDomain = measurementDomain(weight.flatMap(item => item.bodyFatPercent == null ? [] : [item.bodyFatPercent]));
   const macros = nutritionDays(state, endWeek, window);
   const water = nutritionDays(state, waterWeek, waterWindow);
   const macroConfig = { protein: { label: 'Proteína (g)', color: 'var(--macro-protein)' }, carbs: { label: 'Hidratos (g)', color: 'var(--macro-carbs)' }, fat: { label: 'Gordura (g)', color: 'var(--macro-fat)' } };
   const goals = { protein: state.goals.proteinG, carbs: state.goals.carbsG, fat: state.goals.fatG };
   const rangeControls = (anchor: string, setAnchor: (date: string) => void, range: NutritionWindow, setRange: (range: NutritionWindow) => void, latest = lastNutrition) => <div className="nutrition-period-controls">
-    <div className="segmented">{(['week', 'month', 'year'] as const).map((key, index) => <button type="button" key={key} aria-pressed={range === key} className={range === key ? 'selected' : ''} onClick={() => setRange(key)}>{['Semana', 'Mês', 'Ano'][index]}</button>)}</div>
+    <div className="segmented">{(['week', 'month'] as const).map((key, index) => <button type="button" key={key} aria-pressed={range === key} className={range === key ? 'selected' : ''} onClick={() => setRange(key)}>{['Semana', '4 semanas'][index]}</button>)}</div>
     <div className="chart-period-navigation"><Button variant="outline" size="icon" aria-label="Semana anterior" onClick={() => setAnchor(shiftDate(anchor, -7))}><ChevronLeft /></Button><span aria-live="polite">{shortDate(shiftDate(anchor, range === 'week' ? 0 : range === 'month' ? -21 : -357))} — {shortDate(shiftDate(anchor, 6))}<small>{range === 'week' ? '1 semana' : range === 'month' ? '4 semanas' : '52 semanas'} · {anchor.slice(0, 4)}</small></span><Button variant="outline" size="icon" aria-label="Semana seguinte" onClick={() => setAnchor(shiftDate(anchor, 7))}><ChevronRight /></Button></div>
     <Button variant="ghost" onClick={() => setAnchor(weekStart(latest))}>Últimos registos</Button>
   </div>;
@@ -72,12 +69,12 @@ export function ProgressCharts({ state, today }: { state: AppState; today: strin
   });
   const height = (full: boolean) => ({ height: full ? 'max(280px, calc(100dvh - 280px))' : '280px', width: '100%' });
   return <>
-    <ChartPanel title="Peso e gordura corporal" id="progress-weight-chart-v2">{full => <div className="nutrition-chart-swipe" {...gesture(weightWeek, setWeightWeek)}>
-      {rangeControls(weightWeek, setWeightWeek, weightWindow, setWeightWindow, lastWeight)}
-      <p className="chart-data-note">Meta: {state.profile.targetWeightKg} kg · escala fixa 0–140 kg</p>
+    <ChartPanel title="Peso e gordura corporal" id="progress-weight-chart-v2">{full => <div className="weight-history-chart" onTouchStart={event => event.stopPropagation()} onTouchMove={event => event.stopPropagation()} onTouchEnd={event => event.stopPropagation()}>
+      <p className="chart-data-note">{weight.length ? `Desde a primeira medição: ${shortDate(weight[0].date)} ${weight[0].date.slice(0, 4)}` : 'Regista o teu peso para acompanhar a evolução.'}</p>
+      <p className="chart-data-note">{weight.length} registos · Meta: {state.profile.targetWeightKg} kg · escala automática</p>
       {<ChartContainer style={height(full)} config={{ weightKg: { label: 'Peso (kg)', color: '#168fbd' }, bodyFatPercent: { label: 'Gordura (%)', color: '#ef6f4c' } }}><AreaChart data={weight} margin={{ left: 0, right: 12 }}>
-        <CartesianGrid vertical={false} opacity={.25}/><XAxis dataKey="date" tickFormatter={shortDate} minTickGap={40} tickLine={false}/>
-        <YAxis yAxisId="weight" width={45} domain={[0, 140]} ticks={[0, 20, 40, 60, 80, 100, 120, 140]} allowDataOverflow/><YAxis yAxisId="fat" orientation="right" width={40} unit="%" hide={!weight.some(item => item.bodyFatPercent != null)} domain={[0, 100]} allowDataOverflow/>
+        <CartesianGrid vertical={false} opacity={.25}/><XAxis dataKey="date" tickFormatter={shortDate} minTickGap={40} tickLine={false} padding={{ left: 12, right: 12 }} interval="preserveStartEnd"/>
+        <YAxis yAxisId="weight" width={45} domain={weightDomain} allowDataOverflow/><YAxis yAxisId="fat" orientation="right" width={40} unit="%" hide={!weight.some(item => item.bodyFatPercent != null)} domain={fatDomain} allowDataOverflow/>
         <ChartTooltip content={<ChartTooltipContent labelFormatter={value => shortDate(String(value))} />}/><ReferenceLine yAxisId="weight" y={state.profile.targetWeightKg} stroke="#e5483f" strokeOpacity={.4} strokeDasharray="7 6"/>
         <Area yAxisId="weight" dataKey="weightKg" stroke="var(--color-weightKg)" fill="var(--color-weightKg)" fillOpacity={.08} strokeWidth={2} dot={{ r: 4 }} connectNulls isAnimationActive={false}/><Area yAxisId="fat" dataKey="bodyFatPercent" stroke="var(--color-bodyFatPercent)" fill="transparent" dot={{ r: 3 }} connectNulls isAnimationActive={false}/>
       </AreaChart></ChartContainer>}

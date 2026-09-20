@@ -1,6 +1,17 @@
 import type { AppState } from './fit-types';
 
 export type NutritionWindow = 'week' | 'month' | 'year';
+// Keep the timeline anchored to the first actual measurement, without empty weeks.
+export function weightHistory(weights: AppState['weights'], today: string) {
+  return weights.filter(item => item.date <= today).slice().sort((a, b) => a.date.localeCompare(b.date));
+}
+export function measurementDomain(values: number[], minimumPadding = 2): [number, number] {
+  const valid = values.filter(Number.isFinite);
+  if (!valid.length) return [0, 100];
+  const min = Math.min(...valid), max = Math.max(...valid);
+  const padding = Math.max(minimumPadding, (max - min) * 0.15);
+  return [Math.max(0, Math.floor(min - padding)), Math.ceil(max + padding)];
+}
 export function shiftDate(date: string, days: number) {
   const value = new Date(`${date}T12:00:00`);
   value.setDate(value.getDate() + days);
