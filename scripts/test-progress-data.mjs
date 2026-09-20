@@ -25,3 +25,11 @@ const sessions = [{ date: '2026-09-14', planId: 'segunda', exercises: [{ key, se
 assert.deepEqual(latestExerciseSets(exercise, sessions, '2026-09-21', 'segunda'), [{ load: 40, reps: 12 }]);
 assert.deepEqual(latestExerciseSets(exercise, sessions, '2026-09-21', 'nova'), [{ load: 60, reps: 6 }]);
 console.log('Progress: daily values in 3 windows, dates, missing records and routine defaults passed.');
+const { isFreshMealDraft, MEAL_DRAFT_TTL_MS } = await load('../lib/meal-draft.ts');
+const now = Date.now();
+assert.equal(isFreshMealDraft({updatedAt: now - 60_000}, now), true);
+assert.equal(isFreshMealDraft({updatedAt: now - MEAL_DRAFT_TTL_MS}, now), false);
+assert.equal(isFreshMealDraft({}, now), false);
+assert.equal(isFreshMealDraft({updatedAt: now + 1}, now), false);
+assert.equal(isFreshMealDraft(null, now), false);
+console.log('Meal drafts: recent, expired, legacy, future and empty checks passed.');

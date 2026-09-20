@@ -859,3 +859,20 @@ body, .main-surface, :root[data-theme='dark'] body, :root[data-theme='dark'] .ma
 .number-wheel-card > footer button:last-child { background: #f6a700; border-color: #f6a700; color: #090909; }
 [data-slot='button'].bg-primary { color: #090909; }
 .ingredient-favorite { width: 44px; }
+
+/* One token per nutrient, shared by the ring, its legend and progress series. */
+:root { --macro-protein: #b87400; --macro-carbs: #f6a700; --macro-fat: #13805f; --macro-fiber: #267ba2; }
+:root[data-theme='dark'] { --macro-protein: #fed353; --macro-carbs: #f6a700; --macro-fat: #57c59a; --macro-fiber: #67bddf; }
+html, body { touch-action: pan-x pan-y; }
+input, textarea, select { font-size: max(16px, 1rem); }
+.main-surface { touch-action: pan-y; }
+.page-swipe-panel { width: 100%; backface-visibility: hidden; }
+.page-swipe-panel.current { position: relative; }
+.page-swipe-panel.neighbor { position: absolute; inset: 0 auto auto 0; pointer-events: none; }
+.page-swipe-panel.animating { transition: transform .32s cubic-bezier(.2,.78,.2,1); will-change: transform; }
+.page-swipe-panel .page-enter { animation: none !important; }
+[data-slot='dialog-content'].progress-fullscreen { top: 0 !important; left: 0 !important; right: 0; bottom: 0; translate: none !important; transform: none !important; margin: 0; box-sizing: border-box; }
+.progress-fullscreen [data-slot='chart'], .chart-card [data-slot='chart'] { min-width: 0; max-width: 100%; aspect-ratio: auto; }
+.nutrition-chart-swipe { overflow-x: clip; min-width: 0; }
+.progress-fullscreen .nutrition-chart-swipe { width: 100%; }
+@media(prefers-reduced-motion:reduce) { .page-swipe-panel.animating { transition-duration: .01s; } }

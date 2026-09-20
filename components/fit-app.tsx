@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isFreshMealDraft } from '@/lib/meal-draft';
 import { createPortal } from 'react-dom';
 import { ExerciseCatalog } from '@/components/exercise-catalog';
 import { FoodPhotoTools } from '@/components/food-photo-tools';
@@ -708,6 +709,10 @@ export default function FitApp() {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [swipeNeighbor, setSwipeNeighbor] = useState<Page | null>(null);
   const [swipeAnimating, setSwipeAnimating] = useState(false);
+  const swipeLayer = useRef<HTMLDivElement>(null);
+  const swipeDestination = useRef<Page | null>(null);
+  const swipeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (swipeTimer.current) clearTimeout(swipeTimer.current); }, []);
   const [healthSyncStatus, setHealthSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
   const [healthSyncMessage, setHealthSyncMessage] = useState('');
   const healthSyncInFlight = useRef(false);
@@ -796,6 +801,7 @@ export default function FitApp() {
       .then(({ state: saved }) => {
         if (saved) {
           try { const localDraft = localStorage.getItem('fitide-meal-draft'); if (localDraft) saved.mealDraft = JSON.parse(localDraft); } catch { /* Recover from the server instead. */ }
+          if (!isFreshMealDraft(saved.mealDraft)) { saved.mealDraft = undefined; try { localStorage.removeItem('fitide-meal-draft'); } catch { /* Optional local journal. */ } }
           let pending: { activeWorkout?: AppState['activeWorkout'] } | null = null;
           try { pending = JSON.parse(localStorage.getItem('fitide-workout-pending') ?? 'null'); } catch { /* Server remains authoritative when cache is unavailable. */ }
           setState(mergeState(pending ? { ...saved, activeWorkout: pending.activeWorkout } : saved));
@@ -806,6 +812,35 @@ export default function FitApp() {
       .catch(() => setSync('error'))
       .finally(() => setLoaded(true));
   }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const checkDraft = (active = document.visibilityState !== 'hidden') => {
+      if (!active) {
+        setState(current => {
+          if (!current.mealDraft) return current;
+          const mealDraft = { ...current.mealDraft, updatedAt: Date.now() };
+          try { localStorage.setItem('fitide-meal-draft', JSON.stringify(mealDraft)); } catch { /* Server save remains available. */ }
+          return { ...current, mealDraft };
+        });
+        return;
+      }
+      let draft: AppState['mealDraft'];
+      try { draft = JSON.parse(localStorage.getItem('fitide-meal-draft') ?? 'null'); } catch { return; }
+      if (draft && !isFreshMealDraft(draft)) {
+        setMealOpen(false); setEditingMeal(null);
+        setState(current => ({ ...current, mealDraft: undefined }));
+        try { localStorage.removeItem('fitide-meal-draft'); } catch { /* Optional local journal. */ }
+      }
+    };
+    const onVisibility = () => checkDraft();
+    document.addEventListener('visibilitychange', onVisibility);
+    let remove: (() => Promise<void>) | undefined;
+    let disposed = false;
+    if (Capacitor.isNativePlatform()) void CapacitorApp.addListener('appStateChange', ({ isActive }) => checkDraft(isActive)).then(handle => { if (disposed) void handle.remove(); else remove = () => handle.remove(); });
+    return () => { disposed = true; document.removeEventListener('visibilitychange', onVisibility); void remove?.(); };
+  }, [loaded]);
+
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
@@ -978,6 +1013,8 @@ export default function FitApp() {
   }
 
   function resetSwipe() {
+    if (swipeTimer.current) clearTimeout(swipeTimer.current);
+    swipeDestination.current = null;
     swipeStart.current = null;
     swipeAxis.current = null;
     setSwipeAnimating(false);
@@ -987,6 +1024,7 @@ export default function FitApp() {
 
   function handleSwipeStart(event: React.TouchEvent<HTMLElement>) {
     const target = event.target as HTMLElement;
+    if (swipeAnimating) return;
     if (!swipePageOrder.includes(page) || event.touches.length !== 1 || target.closest('input, textarea, select, [role="dialog"], .number-wheel-card, .chart-range, .widgets-editing, .widget-reorder-footer')) {
       swipeStart.current = null;
       return;
@@ -1035,11 +1073,16 @@ export default function FitApp() {
     const nextPage = swipePageOrder[nextIndex];
     const shouldChange = nextIndex !== index && Math.abs(dx) >= Math.min(92, event.currentTarget.clientWidth * 0.22);
     setSwipeAnimating(true);
-    setSwipeOffset(shouldChange ? (dx < 0 ? -event.currentTarget.clientWidth : event.currentTarget.clientWidth) : 0);
-    window.setTimeout(() => {
-      if (shouldChange) setPage(nextPage);
-      resetSwipe();
-    }, 320);
+    const width = swipeLayer.current?.clientWidth ?? event.currentTarget.clientWidth;
+    swipeDestination.current = shouldChange ? nextPage : null;
+    setSwipeOffset(shouldChange ? (dx < 0 ? -width : width) : 0);
+    swipeTimer.current = setTimeout(finishSwipe, 380);
+  }
+
+  function finishSwipe() {
+    const destination = swipeDestination.current;
+    if (destination) setPage(destination);
+    resetSwipe();
   }
 
   if (!loaded) {
@@ -1136,7 +1179,7 @@ export default function FitApp() {
             <button
               key={id}
               className={`nav-item ${page === id ? 'active' : ''}`}
-              onClick={() => setPage(id)}
+              onClick={() => { resetSwipe(); setPage(id); }}
             >
               <Icon />
               {label}
@@ -1198,24 +1241,17 @@ export default function FitApp() {
           </div>
         </div></header>
 
-        <div className="page-swipe-layer">
-          <div
-            className={`page-swipe-current ${swipeAnimating ? 'animating' : ''}`}
-            style={{ transform: `translate3d(${swipeOffset}px,0,0)` }}
-          >
-            {renderPage(page)}
-          </div>
-          {swipeNeighbor && (
-            <div
-              className={`page-swipe-neighbor ${swipeAnimating ? 'animating' : ''}`}
-              aria-hidden="true"
-              style={{
-                transform: `translate3d(calc(${swipeNeighbor === swipePageOrder[swipePageOrder.indexOf(page) + 1] ? '100%' : '-100%'} + ${swipeOffset}px),0,0)`,
-              }}
-            >
-              {renderPage(swipeNeighbor)}
+        <div className="page-swipe-layer" ref={swipeLayer}>
+          {[...new Set([page, ...(swipeNeighbor ? [swipeNeighbor] : [])])].sort().map(panel => (
+            <div key={panel}
+              className={`page-swipe-panel ${panel === page ? 'current' : 'neighbor'} ${swipeAnimating ? 'animating' : ''}`}
+              aria-hidden={panel !== page}
+              inert={panel !== page}
+              onTransitionEnd={event => { if (event.target === event.currentTarget && event.propertyName === 'transform' && panel === page) finishSwipe(); }}
+              style={{ transform: panel === page ? `translate3d(${swipeOffset}px,0,0)` : `translate3d(calc(${swipePageOrder.indexOf(panel) > swipePageOrder.indexOf(page) ? '100%' : '-100%'} + ${swipeOffset}px),0,0)` }}>
+              {renderPage(panel)}
             </div>
-          )}
+          ))}
         </div>
       </section>
 
@@ -1551,10 +1587,10 @@ function TodayPage({
   const [fastStartOpen, setFastStartOpen] = useState(false);
   const [waterMl, setWaterMl] = useState(250);
   const macroPie = [
-    { name: 'Proteína', value: Math.round(consumed.protein * 4), fill: '#087fb7' },
-    { name: 'Hidratos', value: Math.round(consumed.carbs * 4), fill: '#f06742' },
-    { name: 'Gordura', value: Math.round(consumed.fat * 9), fill: '#13805f' },
-    { name: 'Fibra', value: Math.round(consumed.fiber * 2), fill: '#35a6d1' },
+    { name: 'Proteína', value: Math.round(consumed.protein * 4), fill: 'var(--macro-protein)' },
+    { name: 'Hidratos', value: Math.round(consumed.carbs * 4), fill: 'var(--macro-carbs)' },
+    { name: 'Gordura', value: Math.round(consumed.fat * 9), fill: 'var(--macro-fat)' },
+    { name: 'Fibra', value: Math.round(consumed.fiber * 2), fill: 'var(--macro-fiber)' },
   ].filter((item) => item.value > 0);
   const macroPieTotal = macroPie.reduce((total, item) => total + item.value, 0);
   let macroPieCursor = 0;
@@ -1965,10 +2001,10 @@ function TodayPage({
             <small>Distribuição calórica entre proteína, hidratos e gordura</small>
           </div>
           <div className="macro-bars">
-            <Macro name="Proteína" current={consumed.protein} target={state.goals.proteinG} color="var(--plum)" />
-            <Macro name="Hidratos" current={consumed.carbs} target={state.goals.carbsG} color="var(--orange)" />
-            <Macro name="Gordura" current={consumed.fat} target={state.goals.fatG} color="var(--green)" />
-            <Macro name="Fibra" current={consumed.fiber} target={state.goals.fiberG} color="var(--blue)" />
+            <Macro name="Proteína" current={consumed.protein} target={state.goals.proteinG} color="var(--macro-protein)" />
+            <Macro name="Hidratos" current={consumed.carbs} target={state.goals.carbsG} color="var(--macro-carbs)" />
+            <Macro name="Gordura" current={consumed.fat} target={state.goals.fatG} color="var(--macro-fat)" />
+            <Macro name="Fibra" current={consumed.fiber} target={state.goals.fiberG} color="var(--macro-fiber)" />
           </div>
         </CardContent>
       </Card>
@@ -2092,7 +2128,7 @@ function MealDialog({
   onClose: () => void;
   onSave: (meal: Meal) => void;
 }) {
-  const restoredDraft = useRef(draft?.date === date && draft?.mealId === meal?.id && Boolean(draft?.planned) === planned ? draft : undefined).current;
+  const restoredDraft = useRef(isFreshMealDraft(draft) && draft?.date === date && draft?.mealId === meal?.id && Boolean(draft?.planned) === planned ? draft : undefined).current;
   const [type, setType] = useState(restoredDraft?.type ?? meal?.type ?? 'Almoço');
   const [mode, setMode] = useState<'Catálogo' | 'Rótulo'>(restoredDraft?.mode ?? 'Catálogo');
   const [foodId, setFoodId] = useState(restoredDraft?.foodId ?? foodCatalog[0].id);
@@ -2134,7 +2170,7 @@ function MealDialog({
   });
   const [ingredients, setIngredients] = useState<IngredientEntry[]>(restoredDraft?.ingredients ?? meal?.ingredients ?? []);
   const draftCallback = useRef(onDraft); draftCallback.current = onDraft;
-  useEffect(() => { draftCallback.current({ date, mealId: meal?.id, planned, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, entryMode, assistantText }); }, [date, meal?.id, planned, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, entryMode, assistantText]);
+  useEffect(() => { draftCallback.current({ updatedAt: Date.now(), date, mealId: meal?.id, planned, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, entryMode, assistantText }); }, [date, meal?.id, planned, type, ingredients, manualName, manual, grams, foodId, quantityMode, foodQuery, mode, entryMode, assistantText]);
   const total = roundNutrients(sumNutrients(ingredients));
   const availableFoods = useMemo<FoodCatalogItem[]>(() => [
     ...customFoods.map((food) => ({ id: food.id, name: food.name, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber, calcium: food.calcium, iron: food.iron, vitaminC: food.vitaminC })),

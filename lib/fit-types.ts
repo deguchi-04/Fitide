@@ -188,7 +188,7 @@ export interface AppState {
   plannedMeals?: Meal[];
   shoppingChecked?: string[];
   reuseWorkoutPerformance?: boolean;
-  mealDraft?: { entryMode?: 'barcode' | 'catalog' | 'assistant' | 'food'; planned?: boolean; date: string; mealId?: string; type: string; ingredients: IngredientEntry[]; manualName: string; manual: Record<keyof Nutrients, number | ''>; grams: number; foodId?: string; quantityMode?: 'g' | 'ml' | 'unit'; foodQuery: string; mode: 'Catálogo' | 'Rótulo'; assistantText: string };
+  mealDraft?: { updatedAt?: number; entryMode?: 'barcode' | 'catalog' | 'assistant' | 'food'; planned?: boolean; date: string; mealId?: string; type: string; ingredients: IngredientEntry[]; manualName: string; manual: Record<keyof Nutrients, number | ''>; grams: number; foodId?: string; quantityMode?: 'g' | 'ml' | 'unit'; foodQuery: string; mode: 'Catálogo' | 'Rótulo'; assistantText: string };
   activeWorkout?: {
     plan: WorkoutPlan;
     date: string;
