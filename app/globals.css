@@ -771,7 +771,7 @@ details[open] > .workout-history-toggle svg { transform:rotate(180deg); }
 .weight-year-controls label { display: flex; gap: 12px; align-items: center; }
 .weight-year-controls select { padding: 10px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--foreground); }
 .nutrition-period-controls { display: grid; gap: 12px; margin-bottom: 16px; }
-.nutrition-period-controls > .segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.nutrition-period-controls > .segmented { display: grid; grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .nutrition-period-controls > .segmented button { min-height: 44px; }
 .chart-period-navigation { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 12px; text-align: center; }
 .chart-period-navigation span { font-weight: 650; font-size: 14px; }
