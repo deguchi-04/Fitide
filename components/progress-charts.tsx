@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from 'recharts';
 import { ChevronLeft, ChevronRight, Maximize2, X } from '@/components/material-icons';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -82,7 +82,16 @@ export function ProgressCharts({ state, today }: { state: AppState; today: strin
     <ChartPanel title="Macronutrientes por dia" id="progress-macros-v2">{full => <div className="nutrition-chart-swipe" {...gesture(endWeek, setEndWeek)}>
       {rangeControls(endWeek, setEndWeek, window, setWindow)}
       <div className="daily-goal-legend">{(Object.keys(goals) as Array<keyof typeof goals>).map(key => <span key={key}><i style={{ background: macroConfig[key].color }}/>{macroConfig[key].label}: meta {goals[key]} g/dia</span>)}</div>
-      <ChartContainer style={height(full)} config={macroConfig}>{window === 'week' ? <BarChart data={macros}><CartesianGrid vertical={false} opacity={.25}/><XAxis dataKey="date" tickFormatter={shortDate}/><YAxis width={40} domain={[0, 300]} ticks={[0, 50, 100, 150, 200, 250, 300]} allowDataOverflow/><ChartTooltip content={<ChartTooltipContent labelFormatter={value => shortDate(String(value))}/>}/>{(Object.keys(goals) as Array<keyof typeof goals>).map(key => <ReferenceLine key={key} y={goals[key]} stroke="#e5483f" strokeOpacity={.3} strokeDasharray="7 6"/>)}{Object.keys(goals).map(key => <Bar key={key} dataKey={key} fill={`var(--color-${key})`} radius={[4, 4, 0, 0]} isAnimationActive={false}/>)}</BarChart> : <LineChart data={macros}><CartesianGrid vertical={false} opacity={.25}/><XAxis dataKey="date" tickFormatter={shortDate} minTickGap={40}/><YAxis width={40} domain={[0, 300]} ticks={[0, 50, 100, 150, 200, 250, 300]} allowDataOverflow/><ChartTooltip content={<ChartTooltipContent labelFormatter={value => shortDate(String(value))}/>}/>{(Object.keys(goals) as Array<keyof typeof goals>).map(key => <ReferenceLine key={key} y={goals[key]} stroke="#e5483f" strokeOpacity={.3} strokeDasharray="7 6"/>)}{Object.keys(goals).map(key => <Line key={key} dataKey={key} stroke={`var(--color-${key})`} strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false}/>)}</LineChart>}</ChartContainer>
+      <ChartContainer style={height(full)} config={macroConfig}>
+        <BarChart data={macros} barGap={window === 'week' ? 4 : 1}>
+          <CartesianGrid vertical={false} opacity={.25}/>
+          <XAxis dataKey="date" tickFormatter={shortDate} minTickGap={window === 'week' ? 5 : 40}/>
+          <YAxis width={40} domain={[0, 300]} ticks={[0, 50, 100, 150, 200, 250, 300]} allowDataOverflow/>
+          <ChartTooltip content={<ChartTooltipContent labelFormatter={value => shortDate(String(value))}/>}/>
+          {(Object.keys(goals) as Array<keyof typeof goals>).map(key => <ReferenceLine key={key} y={goals[key]} stroke="#e5483f" strokeOpacity={.3} strokeDasharray="7 6"/>)}
+          {Object.keys(goals).map(key => <Bar key={key} dataKey={key} fill={`var(--color-${key})`} radius={[4, 4, 0, 0]} isAnimationActive={false}/>)}
+        </BarChart>
+      </ChartContainer>
       <p className="chart-data-note">Desliza para mudar de semana. Dias sem registos ficam em branco; os valores nunca são acumulados.</p>
     </div>}</ChartPanel>
     <ChartPanel title="Água por dia" id="progress-water-v2">{full => <div className="nutrition-chart-swipe" {...gesture(waterWeek, setWaterWeek)}>
