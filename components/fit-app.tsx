@@ -92,6 +92,7 @@ import {
   roundNutrients,
   sedentaryTdee,
   suggestedGoals,
+  suggestedMacroGoals,
   sumNutrients,
   tdee,
   weeksToGoal,
@@ -4236,6 +4237,7 @@ function SettingsPage({
   const [profile, setProfile] = useState(state.profile);
   const [goals, setGoals] = useState(state.goals);
   const [recalculationMessage, setRecalculationMessage] = useState('');
+  const [savedGoalsSnapshot, setSavedGoalsSnapshot] = useState('');
   useEffect(() => { setProfile(state.profile); }, [state.profile]);
   useEffect(() => { setGoals(state.goals); }, [state.goals]);
   const [activityPreset, setActivityPreset] = useState('Musculação');
@@ -4268,6 +4270,7 @@ function SettingsPage({
     const nextGoals = alignCalorieGoal(goals, profile, state.activities);
     setGoals(nextGoals);
     setState((current) => ({ ...current, profile, goals: nextGoals }));
+    setSavedGoalsSnapshot(JSON.stringify({ profile, goals: nextGoals }));
   }
   function recalculate() {
     const next = suggestedGoals(profile, state.activities, goals.kind, goals.calorieDeficit);
@@ -4643,7 +4646,7 @@ function SettingsPage({
           <CardHeader>
             <CardTitle>Metas diárias</CardTitle>
             <CardDescription>
-              Todos os valores podem ser alterados manualmente.
+              Ao mudar o défice ou as calorias, as sugestões nutricionais são recalculadas. Podes ajustá-las manualmente antes de guardar.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -4653,7 +4656,7 @@ function SettingsPage({
                 onChange={(e) => {
                   const kind = e.target.value as typeof goals.kind;
                   const suggested = suggestedGoals(profile, state.activities, kind);
-                  setGoals({ ...goals, kind, calorieDeficit: suggested.calorieDeficit, calorieTarget: suggested.calorieTarget });
+                  setGoals({ ...goals, kind, calorieDeficit: suggested.calorieDeficit, calorieTarget: suggested.calorieTarget, ...suggestedMacroGoals(profile, kind, suggested.calorieTarget) });
                 }}
               >
                 <option value="lose_fat">Perder gordura</option>
@@ -4670,10 +4673,12 @@ function SettingsPage({
                     max={1000}
                     step="25"
                     onChange={(value) => {
+                      const calorieTarget = Math.max(1000, draftMaintenance - value);
                       const nextGoals = {
                         ...goals,
                         calorieDeficit: value,
-                        calorieTarget: Math.max(1000, draftMaintenance - value),
+                        calorieTarget,
+                        ...suggestedMacroGoals(profile, goals.kind, calorieTarget),
                       };
                       setGoals(nextGoals);
                       setState((current) => ({ ...current, goals: nextGoals }));
@@ -4687,7 +4692,7 @@ function SettingsPage({
                   min={1000}
                   max={5000}
                   step="10"
-                  onChange={(value) => setGoals({ ...goals, calorieTarget: value, calorieDeficit: Math.max(0, draftMaintenance - value) })}
+                  onChange={(value) => setGoals({ ...goals, calorieTarget: value, calorieDeficit: Math.max(0, draftMaintenance - value), ...suggestedMacroGoals(profile, goals.kind, value) })}
                 />
               </Field>
               <Field label="Água (L)">
@@ -4736,6 +4741,9 @@ function SettingsPage({
                 />
               </Field>
             </div>
+            <p className="privacy-note">Proteína e gordura são calculadas pelo peso; hidratos e fibra acompanham a meta calórica.</p>
+            <Button type="submit" size="lg" className="wide-button"><Save /> Guardar metas</Button>
+            {savedGoalsSnapshot === JSON.stringify({ profile, goals }) && <p className="privacy-note" role="status">Metas guardadas.</p>}
           </CardContent>
         </Card>
         <Card className="panel activities-card">

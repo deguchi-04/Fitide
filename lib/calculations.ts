@@ -89,6 +89,13 @@ export function fatEquivalentKg(dailyDeficit: number, days = 7) {
   return Math.round(((dailyDeficit * days) / 7700) * 1000) / 1000;
 }
 
+export function suggestedMacroGoals(profile: Profile, kind: Goals['kind'], calorieTarget: number) {
+  const proteinG = Math.round(profile.currentWeightKg * (kind === 'gain_muscle' ? 2 : 1.8));
+  const fatG = Math.round(profile.currentWeightKg * 0.8);
+  const carbsG = Math.max(50, Math.round((calorieTarget - proteinG * 4 - fatG * 9) / 4));
+  return { proteinG, fatG, carbsG, fiberG: Math.round((calorieTarget / 1000) * 14) };
+}
+
 export function suggestedGoals(profile: Profile, activities: Activity[], kind: Goals['kind'], preferredDeficit?: number): Goals {
   const maintenance = tdee(profile, activities);
   const calorieDeficit = kind === 'lose_fat'
@@ -96,17 +103,11 @@ export function suggestedGoals(profile: Profile, activities: Activity[], kind: G
       ? Math.min(1000, Math.max(0, preferredDeficit)) : recommendedDeficit(maintenance))
     : 0;
   const calorieTarget = Math.max(1000, Math.round(maintenance - calorieDeficit + (kind === 'gain_muscle' ? 250 : 0)));
-  const proteinG = Math.round(profile.currentWeightKg * (kind === 'gain_muscle' ? 2 : 1.8));
-  const fatG = Math.round(profile.currentWeightKg * 0.8);
-  const carbsG = Math.max(50, Math.round((calorieTarget - proteinG * 4 - fatG * 9) / 4));
   return {
     kind,
     calorieDeficit,
     calorieTarget,
-    proteinG,
-    carbsG,
-    fatG,
-    fiberG: Math.round((calorieTarget / 1000) * 14),
+    ...suggestedMacroGoals(profile, kind, calorieTarget),
     waterLiters: Math.round(profile.currentWeightKg * 0.035 * 10) / 10,
     fastingHours: 16,
   };

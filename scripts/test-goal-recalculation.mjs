@@ -5,7 +5,7 @@ import ts from 'typescript';
 const source = ts.transpileModule(readFileSync(new URL('../lib/calculations.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { suggestedGoals, weeksToGoal, tdee } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { suggestedGoals, suggestedMacroGoals, weeksToGoal, tdee } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const profile = { currentWeightKg: 90, targetWeightKg: 80, heightCm: 180, age: 30, sex: 'male' };
 const recalculate = (p, deficit) => {
   const goals = suggestedGoals(p, [], 'lose_fat', deficit);
@@ -22,3 +22,13 @@ assert.equal(recalculate({ ...profile, currentWeightKg: 80 }, 300).weeks, 0);
 assert.equal(weeksToGoal(profile, tdee(profile, []) + 250, tdee(profile, [])), null);
 assert.equal(weeksToGoal({ ...profile, targetWeightKg: 95 }, tdee(profile, []) - 300, tdee(profile, [])), null);
 console.log('Goal recalculation: chosen deficit, current weight, unchanged inputs, maintenance, reached goal and wrong-direction balances passed.');
+const higherDeficit = recalculate(profile, 600).goals;
+assert.ok(higherDeficit.carbsG < initial.goals.carbsG);
+assert.ok(higherDeficit.fiberG < initial.goals.fiberG);
+assert.equal(higherDeficit.proteinG, Math.round(profile.currentWeightKg * 1.8));
+assert.equal(higherDeficit.fatG, Math.round(profile.currentWeightKg * .8));
+const macros = suggestedMacroGoals(profile, 'lose_fat', 2000);
+assert.equal(macros.fiberG, 28);
+assert.ok(Math.abs(macros.proteinG * 4 + macros.carbsG * 4 + macros.fatG * 9 - 2000) <= 2);
+assert.equal(suggestedMacroGoals(profile, 'gain_muscle', 2500).proteinG, 180);
+console.log('Daily macro goals: deficit and manual calories recalculate all four suggestions.');
