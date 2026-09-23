@@ -4,11 +4,12 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, ReferenceLine, XAxis, YA
 import { ChevronLeft, ChevronRight, Maximize2, X } from '@/components/material-icons';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
 import { Dialog, DialogPortal, DialogOverlay, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import type { AppState } from '@/lib/fit-types';
-import { nutritionDays, weightHistory, measurementDomain, shiftDate, weekStart, type NutritionWindow } from '@/lib/progress-data';
+import { nutritionDays, nutritionAverages, weightHistory, measurementDomain, shiftDate, weekStart, type NutritionWindow } from '@/lib/progress-data';
 
 const shortDate = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
 function ChartPanel({ title, id, children }: { title: string; id: string; children: (expanded: boolean) => ReactNode }) {
@@ -41,6 +42,8 @@ export function ProgressCharts({ state, today }: { state: AppState; today: strin
   const weightDomain = measurementDomain(weight.map(item => item.weightKg));
   const fatDomain = measurementDomain(weight.flatMap(item => item.bodyFatPercent == null ? [] : [item.bodyFatPercent]));
   const macros = nutritionDays(state, endWeek, window);
+  const averages = nutritionAverages(macros, today);
+  const averageLabels = { protein: 'Proteína', carbs: 'Hidratos', fat: 'Gordura', fiber: 'Fibra', water: 'Água' };
   const water = nutritionDays(state, waterWeek, waterWindow);
   const macroConfig = { protein: { label: 'Proteína (g)', color: 'var(--macro-protein)' }, carbs: { label: 'Hidratos (g)', color: 'var(--macro-carbs)' }, fat: { label: 'Gordura (g)', color: 'var(--macro-fat)' } };
   const goals = { protein: state.goals.proteinG, carbs: state.goals.carbsG, fat: state.goals.fatG };
@@ -94,6 +97,21 @@ export function ProgressCharts({ state, today }: { state: AppState; today: strin
       </ChartContainer>
       <p className="chart-data-note">Desliza para mudar de semana. Dias sem registos ficam em branco; os valores nunca são acumulados.</p>
     </div>}</ChartPanel>
+    <Card className="panel wide nutrition-averages" data-widget-id="progress-nutrition-averages">
+      <CardHeader><CardTitle>Médias diárias de consumo</CardTitle></CardHeader>
+      <CardContent>
+        <p className="chart-data-note">{shortDate(macros[0].date)} — {shortDate(macros[macros.length - 1].date)} · mesmo período do gráfico de macros</p>
+        <Table aria-label="Médias diárias de macros e água">
+          <TableHeader><TableRow><TableHead scope="col">Consumo</TableHead><TableHead scope="col">Média/dia</TableHead><TableHead scope="col">Dias</TableHead></TableRow></TableHeader>
+          <TableBody>{averages.map(({ key, average, count }) => <TableRow key={key}>
+            <TableHead scope="row">{averageLabels[key]}</TableHead>
+            <TableCell>{average === null ? '—' : `${average.toLocaleString('pt-PT', { minimumFractionDigits: key === 'water' ? 2 : 1, maximumFractionDigits: key === 'water' ? 2 : 1 })} ${key === 'water' ? 'L' : 'g'}`}</TableCell>
+            <TableCell>{count}</TableCell>
+          </TableRow>)}</TableBody>
+        </Table>
+        <p className="chart-data-note">Só contam dias com registos, até hoje. Refeições e água são contadas separadamente; dias incompletos também entram na média. Sem registos: —.</p>
+      </CardContent>
+    </Card>
     <ChartPanel title="Água por dia" id="progress-water-v2">{full => <div className="nutrition-chart-swipe" {...gesture(waterWeek, setWaterWeek)}>
       {rangeControls(waterWeek, setWaterWeek, waterWindow, setWaterWindow)}<p className="chart-data-note">Meta diária: {state.goals.waterLiters} L</p>
       <ChartContainer style={height(full)} config={{ water: { label: 'Água (L)', color: 'var(--macro-fiber)' } }}><BarChart data={water}><CartesianGrid vertical={false} opacity={.25}/><XAxis dataKey="date" tickFormatter={shortDate} minTickGap={30}/><YAxis width={40} domain={[0, 8]} ticks={[0, 2, 4, 6, 8]} allowDataOverflow/><ChartTooltip content={<ChartTooltipContent labelFormatter={value => shortDate(String(value))}/>}/><ReferenceLine y={state.goals.waterLiters} stroke="#e5483f" strokeOpacity={.35} strokeDasharray="7 6"/><Bar dataKey="water" fill="var(--color-water)" radius={[4, 4, 0, 0]} isAnimationActive={false}/></BarChart></ChartContainer>

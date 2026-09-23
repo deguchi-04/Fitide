@@ -30,7 +30,15 @@ export function nutritionDays(state: Pick<AppState, 'meals' | 'water'>, endWeek:
     const meals = state.meals.filter(meal => meal.date === date);
     const water = state.water.filter(item => item.date === date);
     const ingredients = meals.flatMap(meal => meal.ingredients);
-    const sum = (key: 'protein' | 'carbs' | 'fat') => meals.length ? Math.round(ingredients.reduce((total, item) => total + item[key], 0) * 10) / 10 : null;
-    return { date, protein: sum('protein'), carbs: sum('carbs'), fat: sum('fat'), water: water.length ? water.reduce((total, item) => total + item.liters, 0) : null };
+    const sum = (key: 'protein' | 'carbs' | 'fat' | 'fiber') => meals.length ? Math.round(ingredients.reduce((total, item) => total + (item[key] ?? 0), 0) * 10) / 10 : null;
+    return { date, protein: sum('protein'), carbs: sum('carbs'), fat: sum('fat'), fiber: sum('fiber'), water: water.length ? water.reduce((total, item) => total + item.liters, 0) : null };
+  });
+}
+
+export function nutritionAverages(days: ReturnType<typeof nutritionDays>, today: string) {
+  return (['protein', 'carbs', 'fat', 'fiber', 'water'] as const).map(key => {
+    const values = days.filter(day => day.date <= today).map(day => day[key])
+      .filter((value): value is number => value !== null && Number.isFinite(value));
+    return { key, count: values.length, average: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null };
   });
 }

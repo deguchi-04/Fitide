@@ -5,7 +5,7 @@ async function load(path) {
   const source = ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 }
-const { nutritionDays, weekStart, shiftDate } = await load('../lib/progress-data.ts');
+const { nutritionDays, nutritionAverages, weekStart, shiftDate } = await load('../lib/progress-data.ts');
 assert.equal(weekStart('2026-09-20'), '2026-09-14');
 assert.equal(weekStart('2026-09-14'), '2026-09-14');
 assert.equal(shiftDate('2026-12-31', 1), '2027-01-01');
@@ -25,6 +25,19 @@ const sessions = [{ date: '2026-09-14', planId: 'segunda', exercises: [{ key, se
 assert.deepEqual(latestExerciseSets(exercise, sessions, '2026-09-21', 'segunda'), [{ load: 40, reps: 12 }]);
 assert.deepEqual(latestExerciseSets(exercise, sessions, '2026-09-21', 'nova'), [{ load: 60, reps: 6 }]);
 console.log('Progress: daily values in 3 windows, dates, missing records and routine defaults passed.');
+const averageState = { meals: [
+  { date: '2026-09-15', ingredients: [{ protein: 20, carbs: 30, fat: 10, fiber: 2 }] },
+  { date: '2026-09-15', ingredients: [{ protein: 40, carbs: 20, fat: 10, fiber: 4 }] },
+  { date: '2026-09-16', ingredients: [{ protein: 0, carbs: 10, fat: 0, fiber: 0 }] },
+  { date: '2026-09-20', ingredients: [{ protein: 999, carbs: 999, fat: 999, fiber: 999 }] },
+], water: [{ date: '2026-09-15', liters: .25 }, { date: '2026-09-15', liters: .5 }, { date: '2026-09-17', liters: 1.25 }] };
+for (const period of ['week', 'month']) {
+  const averages = nutritionAverages(nutritionDays(averageState, '2026-09-17', period), '2026-09-17');
+  assert.deepEqual(averages.map(row => row.average), [30, 30, 10, 3, 1]);
+  assert.ok(averages.every(row => row.count === 2));
+}
+assert.ok(nutritionAverages(nutritionDays({ meals: [], water: [] }, '2026-09-17', 'week'), '2026-09-17').every(row => row.average === null && row.count === 0));
+console.log('Consumption averages: daily totals, zero values, missing days, future dates, fiber, separate water records and empty periods passed.');
 const { isFreshMealDraft, MEAL_DRAFT_TTL_MS } = await load('../lib/meal-draft.ts');
 const now = Date.now();
 assert.equal(isFreshMealDraft({updatedAt: now - 60_000}, now), true);
