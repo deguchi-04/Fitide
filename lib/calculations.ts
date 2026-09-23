@@ -89,9 +89,12 @@ export function fatEquivalentKg(dailyDeficit: number, days = 7) {
   return Math.round(((dailyDeficit * days) / 7700) * 1000) / 1000;
 }
 
-export function suggestedGoals(profile: Profile, activities: Activity[], kind: Goals['kind']): Goals {
+export function suggestedGoals(profile: Profile, activities: Activity[], kind: Goals['kind'], preferredDeficit?: number): Goals {
   const maintenance = tdee(profile, activities);
-  const calorieDeficit = kind === 'lose_fat' ? recommendedDeficit(maintenance) : 0;
+  const calorieDeficit = kind === 'lose_fat'
+    ? (preferredDeficit !== undefined && Number.isFinite(preferredDeficit)
+      ? Math.min(1000, Math.max(0, preferredDeficit)) : recommendedDeficit(maintenance))
+    : 0;
   const calorieTarget = Math.max(1000, Math.round(maintenance - calorieDeficit + (kind === 'gain_muscle' ? 250 : 0)));
   const proteinG = Math.round(profile.currentWeightKg * (kind === 'gain_muscle' ? 2 : 1.8));
   const fatG = Math.round(profile.currentWeightKg * 0.8);
@@ -112,7 +115,8 @@ export function suggestedGoals(profile: Profile, activities: Activity[], kind: G
 export function weeksToGoal(profile: Profile, dailyCalories: number, maintenance: number) {
   const deltaKg = Math.abs(profile.currentWeightKg - profile.targetWeightKg);
   if (deltaKg < 0.1) return 0;
-  const dailyDelta = Math.abs(maintenance - dailyCalories);
+  const dailyDelta = profile.targetWeightKg < profile.currentWeightKg
+    ? maintenance - dailyCalories : dailyCalories - maintenance;
   if (dailyDelta < 100) return null;
   return Math.ceil((deltaKg * 7700) / (dailyDelta * 7));
 }

@@ -4235,6 +4235,9 @@ function SettingsPage({
 }) {
   const [profile, setProfile] = useState(state.profile);
   const [goals, setGoals] = useState(state.goals);
+  const [recalculationMessage, setRecalculationMessage] = useState('');
+  useEffect(() => { setProfile(state.profile); }, [state.profile]);
+  useEffect(() => { setGoals(state.goals); }, [state.goals]);
   const [activityPreset, setActivityPreset] = useState('Musculação');
   const [activityName, setActivityName] = useState('Musculação');
   const [minutes, setMinutes] = useState(60);
@@ -4267,7 +4270,11 @@ function SettingsPage({
     setState((current) => ({ ...current, profile, goals: nextGoals }));
   }
   function recalculate() {
-    const next = suggestedGoals(profile, state.activities, goals.kind);
+    const next = suggestedGoals(profile, state.activities, goals.kind, goals.calorieDeficit);
+    const estimate = weeksToGoal(profile, next.calorieTarget, draftMaintenance);
+    const result = estimate === null ? 'Sem previsão com o saldo calórico atual.'
+      : estimate === 0 ? 'Objetivo atingido.' : `Previsão: ${estimate} semanas.`;
+    setRecalculationMessage(`Sugestões recalculadas com ${profile.currentWeightKg} kg e ${next.calorieTarget} kcal/dia. ${result}${estimate === draftEstimate ? ' A previsão mantém-se com estes dados.' : ''}`);
     setGoals(next);
     setState((current) => ({ ...current, profile, goals: next }));
   }
@@ -4471,6 +4478,7 @@ function SettingsPage({
           <Sparkles /> Recalcular sugestões
         </Button>
       </section>
+      {recalculationMessage && <p className="privacy-note" role="status">{recalculationMessage}</p>}
       <section className="calculation-strip">
         <div>
           <span>TMB</span>
